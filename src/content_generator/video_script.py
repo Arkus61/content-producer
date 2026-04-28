@@ -10,12 +10,14 @@ async def generate_video_script(
 ) -> dict:
     client = openai.AsyncOpenAI(api_key=api_key)
     
-    prompt = f"""Создай сценарий видео на {duration_minutes} минут.
-ЭКСПЕРТ: {card.name}
-СТИЛЬ: {card.tone.style}
-ТЕМА: {topic}
-Формат ответа JSON:
-{{\"hook\": \"...\", \"intro\": \"...\", \"body\": [...], \"cta\": \"...\", \"b_roll_suggestions\": [...]}}"""
+    prompt = (
+        f"Создай сценарий видео на {duration_minutes} минут.\n"
+        f"ЭКСПЕРТ: {card.name}\n"
+        f"СТИЛЬ: {card.tone.style}\n"
+        f"ТЕМА: {topic}\n\n"
+        "Формат ответа JSON:\n"
+        "{" + '"hook": "...", "intro": "...", "body": [...], "cta": "...", "b_roll_suggestions": [...]' + "}"
+    )
     
     response = await client.chat.completions.create(
         model="gpt-4o",

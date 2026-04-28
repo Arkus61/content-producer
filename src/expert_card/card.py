@@ -41,16 +41,26 @@ class ExpertCard(BaseModel):
     updated_at: datetime = Field(default_factory=datetime.utcnow)
     
     def to_markdown(self) -> str:
-        lines = [f"# Эксперт: {self.name}\n"]
+        lines = [f"# Эксперт: {self.name}", ""]
         if self.nickname:
             lines.append(f"**Никнейм:** {self.nickname}")
         lines.append(f"**Профессия:** {self.profession}")
-        lines.append(f"**Город:** {self.city}\n")
-        lines.append(f"## Tone of Voice\n- Стиль: {self.tone.style}\n")
-        lines.append(f"## Экспертиза\n" + "\n".join(f"- {e}" for e in self.expertise))
-        lines.append(f"\n## Уникальное предложение\n{self.uvp}\n")
+        lines.append(f"**Город:** {self.city}")
+        lines.append("")
+        lines.append("## Tone of Voice")
+        lines.append(f"- Стиль: {self.tone.style}")
+        lines.append("")
+        lines.append("## Экспертиза")
+        for e in self.expertise:
+            lines.append(f"- {e}")
+        lines.append("")
+        lines.append("## Уникальное предложение")
+        lines.append(self.uvp)
+        lines.append("")
         if self.stories:
-            lines.append("## Истории\n" + "\n".join(f"- {s}" for s in self.stories))
+            lines.append("## Истории")
+            for s in self.stories:
+                lines.append(f"- {s}")
         return "\n".join(lines)
     
     @classmethod

@@ -2,49 +2,82 @@
 
 AI-powered SaaS для помощи экспертам и блогерам в создании контента.
 
-## Идея
-
-1. **Интервью** — AI проводит интервью с экспертом, «распаковывает» личность
-2. **Карточка эксперта** (.md) — результат: стиль, голос, ценности, экспертиза, аудитории
-3. **Агент-продюсер** — на основе карточки разрабатывает контент-стратегию и генерирует контент
-
-## Архитектура
+## Как это работает
 
 ```
-┌──────────────┐    ┌──────────────┐    ┌──────────────┐    ┌──────────────────┐
-│  Interviewer │───▶│ Expert Card  │───▶│ Producer     │───▶│ Content          │
-│  (AI Chat)   │    │ (profile.md) │    │ Agent        │    │ Generator        │
-└──────────────┘    └──────────────┘    └──────────────┘    └──────────────────┘
+Интервью (AI) ──▶ Карточка Эксперта ──▶ Агент-Продюсер ──▶ Контент
 ```
 
-## Структура проекта
+1. **Эксперт проходит AI-интервью** (или загружает видео/аудио)
+2. **Создаётся карточка** — стиль, голос, экспертиза, аудитория
+3. **AI-Продюсер** строит контент-стратегию
+4. **Генератор** создаёт посты и сценарии в голосе эксперта
 
+## Быстрый старт
+
+```bash
+# Клонировать
+git clone https://github.com/Arkus61/content-producer.git
+cd content-producer
+
+# Установить зависимости
+pip install -r requirements.txt
+
+# Запустить API
+export OPENAI_API_KEY=sk-...
+uvicorn src.api:app --reload
+# → http://localhost:8000/docs
+
+# Или CLI
+python -m src.main
 ```
-content-producer/
-├── src/
-│   ├── interviewer/          # Модуль интервью — распаковка эксперта
-│   ├── expert_card/          # Карточка эксперта + парсер
-│   ├── producer_agent/       # Агент-продюсер — стратегия и планирование
-│   ├── content_generator/    # Генерация контента (сценарии, посты)
-│   └── platforms/            # Интеграции с платформами (YouTube, VK, TG)
-├── tests/
-├── docs/
-├── examples/
-├── pyproject.toml            # Зависимости + сборка
-└── README.md
+
+## Docker
+
+```bash
+OPENAI_API_KEY=sk-... docker compose up -d
 ```
+
+## Документация
+
+- [Архитектура](docs/architecture.md)
+- [API](docs/api.md)
+- [Деплой](docs/deployment.md)
+- [Разработка](docs/development.md)
+
+## API Endpoints
+
+| Метод | Путь | Описание |
+|-------|------|----------|
+| POST | `/api/interview/start` | Начать интервью |
+| POST | `/api/interview/{id}/answer` | Ответить на вопрос |
+| POST | `/api/interview/{id}/finalize` | Завершить → карточка |
+| POST | `/api/transcribe/youtube` | YouTube → транскрипция |
+| POST | `/api/transcribe/upload` | Файл → транскрипция |
+| POST | `/api/transcribe/{id}/to-card` | Транскрипция → карточка |
+| POST | `/api/experts/{id}/content` | Сгенерировать контент |
+| POST | `/api/experts/{id}/plan` | Контент-план |
+| GET | `/api/experts` | Список экспертов |
+| GET | `/health` | Проверка здоровья |
 
 ## Стек
 
-- **Backend:** Python + FastAPI
-- **AI:** OpenAI API / Anthropic API
-- **SaaS:** Stripe для биллинга
-- **DB:** PostgreSQL
-- **Frontend:** React / Next.js (позже)
+- **Backend:** Python 3.11 + FastAPI
+- **AI:** OpenAI (GPT-4o, Whisper)
+- **DB:** PostgreSQL / SQLite
+- **Транскрибация:** ffmpeg + yt-dlp + Whisper
+- **Деплой:** Docker + docker-compose
 
 ## Roadmap
 
-- [ ] **Phase 1:** Interviewer → Expert Card (MVP)
-- [ ] **Phase 2:** Producer Agent — контент-стратегия
-- [ ] **Phase 3:** Content Generator — сценарии + посты
-- [ ] **Phase 4:** SaaS — биллинг, дашборд, интеграции
+- [x] MVP архитектура
+- [x] AI интервью
+- [x] Транскрибация аудио/видео
+- [x] Эксперт карточки
+- [x] AI-продюсер
+- [x] Генерация контента
+- [x] REST API
+- [ ] Веб-интерфейс (Next.js)
+- [ ] Интеграции с платформами
+- [ ] Stripe биллинг
+- [ ] Мультиязычность

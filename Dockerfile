@@ -1,7 +1,14 @@
-FROM python:3.11-slim
+FROM python:3.11-slim AS base
+
 WORKDIR /app
-COPY pyproject.toml .
-RUN pip install --no-cache-dir .
+RUN apt-get update && apt-get install -y --no-install-recommends ffmpeg && rm -rf /var/lib/apt/lists/*
+
+COPY requirements.txt .
+RUN pip install --no-cache-dir -r requirements.txt
+
 COPY src/ src/
+COPY pyproject.toml .
+
 EXPOSE 8000
+
 CMD ["uvicorn", "src.api:app", "--host", "0.0.0.0", "--port", "8000"]

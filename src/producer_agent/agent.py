@@ -8,7 +8,8 @@ class ProducerAgent:
         self.api_key = api_key
     
     def generate_strategy(self) -> str:
-        return f"Стратегия для { self.card.name }: фокус на {', '.join(self.card.expertise[:3])}"
+        expertise_str = ", ".join(self.card.expertise[:3])
+        return f"Стратегия для {self.card.name}: фокус на {expertise_str}"
     
     def get_content_plan(self, period: str = "week") -> list[dict]:
         return [
