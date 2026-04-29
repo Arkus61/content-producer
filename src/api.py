@@ -11,7 +11,7 @@ from sqlalchemy import select, func
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from .config import settings
-from .db.engine import engine, async_session
+from .db.engine import async_engine as engine, async_session_factory as async_session
 from .db.models import Base, ExpertCardModel, InterviewSessionModel, TranscriptionModel, ContentItemModel
 from .db.schemas import (
     ExpertCardCreate, ExpertCardResponse,
@@ -114,14 +114,14 @@ async def start_interview(req: InterviewStartRequest):
         "expert_name": req.expert_name,
         "responses": {},
         "asked_questions": [],
-        "current_category": "intro",
+        "current_category": "personality",
         "is_complete": False,
     }
     
     # Get first question
-    cat = "intro"
+    cat = "personality"
     asked = set()
-    available = [q for q in QUESTION_BANK if q.category == cat and q.id not in asked]
+    available = [q for q in QUESTION_BANK if q.block == cat and q.id not in asked]
     q_text = available[0].text if available else None
     
     return {
@@ -139,7 +139,7 @@ async def submit_answer(session_id: str, req: InterviewAnswerRequest):
     
     # Find current question
     asked = set(data["asked_questions"])
-    available = [q for q in QUESTION_BANK if q.category == data["current_category"] and q.id not in asked]
+    available = [q for q in QUESTION_BANK if q.block == data["current_category"] and q.id not in asked]
     if available:
         q = available[0]
         data["responses"][q.id] = req.answer
@@ -147,14 +147,14 @@ async def submit_answer(session_id: str, req: InterviewAnswerRequest):
     
     # Move to next question
     asked = set(data["asked_questions"])
-    available = [q for q in QUESTION_BANK if q.category == data["current_category"] and q.id not in asked]
+    available = [q for q in QUESTION_BANK if q.block == data["current_category"] and q.id not in asked]
     
     if not available:
-        cats = ["intro", "expertise", "audience", "style", "goals", "story", "platform"]
+        cats = ["personality", "expertise", "product"]
         idx = cats.index(data["current_category"])
         if idx < len(cats) - 1:
             data["current_category"] = cats[idx + 1]
-            available = [q for q in QUESTION_BANK if q.category == data["current_category"] and q.id not in asked]
+            available = [q for q in QUESTION_BANK if q.block == data["current_category"] and q.id not in asked]
         else:
             data["is_complete"] = True
     
@@ -243,8 +243,8 @@ async def transcribe_youtube(expert_name: str, youtube_url: str, language: str =
     transcription_id = str(uuid.uuid4())
     db_trans = TranscriptionModel(
         id=transcription_id,
-        expert_name=expert_name,
-        source=youtube_url,
+        expert_id=None,
+        source_url=youtube_url,
         source_type="youtube",
         text=text,
         language=language,
@@ -287,8 +287,8 @@ async def transcribe_upload(
     transcription_id = str(uuid.uuid4())
     db_trans = TranscriptionModel(
         id=transcription_id,
-        expert_name=expert_name,
-        source=file.filename or "upload",
+        expert_id=None,
+        source_url=file.filename or "upload",
         source_type="file",
         text=text,
         language=language,
@@ -318,8 +318,8 @@ async def get_transcription(transcription_id: str):
     
     return {
         "id": t.id,
-        "expert_name": t.expert_name,
-        "source": t.source,
+        "expert_id": t.expert_id,
+        "source_url": t.source_url,
         "text": t.text,
         "language": t.language,
         "created_at": t.created_at,
@@ -344,7 +344,7 @@ async def transcription_to_card(transcription_id: str):
             self.asked_questions = ["transcription"]
             self.is_complete = True
     
-    session = _Session(t.text, t.expert_name)
+    session = _Session(t.text, t.expert_id or "unknown")
     card = await analyze_interview(session, settings.openai_api_key)
     
     expert_id = str(uuid.uuid4())
@@ -363,7 +363,7 @@ async def transcription_to_card(transcription_id: str):
     
     async with async_session() as s:
         s.add(db_card)
-        t.expert_card_id = expert_id
+        t.expert_id = expert_id
         await s.commit()
     
     experts_dir = Path("experts")
@@ -455,11 +455,11 @@ async def generate_content(expert_id: str, req: GenerateContentRequest):
     body_text = content if isinstance(content, str) else json.dumps(content)
     db_content = ContentItemModel(
         id=content_id,
-        expert_card_id=expert_id,
+        expert_id=expert_id,
         content_type=req.content_type,
         topic=req.topic,
         platform=req.platform,
-        body=body_text,
+        content=body_text,
     )
     
     async with async_session() as s:
@@ -473,7 +473,7 @@ async def get_expert_content(expert_id: str, skip: int = 0, limit: int = 20):
     async with async_session() as s:
         result = await s.execute(
             select(ContentItemModel)
-            .where(ContentItemModel.expert_card_id == expert_id)
+            .where(ContentItemModel.expert_id == expert_id)
             .order_by(ContentItemModel.created_at.desc())
             .offset(skip)
             .limit(limit)

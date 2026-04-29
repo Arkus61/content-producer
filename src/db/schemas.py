@@ -62,6 +62,26 @@ class ContentItemResponse(BaseModel):
         from_attributes = True
 
 
+class InterviewStartRequest(BaseModel):
+    expert_name: str
+
+
+class InterviewAnswerRequest(BaseModel):
+    answer: str
+
+
+class GenerateContentRequest(BaseModel):
+    content_type: str = Field(description="post or video")
+    topic: str
+    platform: str = "telegram"
+
+
+class ContentPlanResponse(BaseModel):
+    expert_id: str
+    plan: list[dict]
+    days: int = 7
+
+
 class PaginationParams(BaseModel):
     skip: int = Field(default=0, ge=0)
     limit: int = Field(default=20, ge=1, le=100)

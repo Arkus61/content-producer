@@ -45,7 +45,8 @@ class InterviewSessionModel(Base):
     __tablename__ = "interview_sessions"
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid4()))
-    expert_id: Mapped[str] = mapped_column(String(36), ForeignKey("expert_cards.id"))
+    expert_id: Mapped[str] = mapped_column(String(36), ForeignKey("expert_cards.id"), nullable=True)
+    expert_name: Mapped[str] = mapped_column(String(255), server_default="")
     questions_asked: Mapped[int] = mapped_column(Integer, server_default="0")
     answers_collected: Mapped[int] = mapped_column(Integer, server_default="0")
     is_complete: Mapped[bool] = mapped_column(Boolean, server_default="false")
