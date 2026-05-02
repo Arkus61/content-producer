@@ -4,9 +4,9 @@ from alembic import context
 import sys
 import os
 
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', 'src'))
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
 
-from db.models import Base
+from src.db.models import Base
 
 config = context.config
 if config.config_file_name is not None:

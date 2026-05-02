@@ -1,41 +1,151 @@
 """Pydantic schemas for API request/response validation."""
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, EmailStr, field_validator
 from typing import Optional
 from datetime import datetime
 
 
+# ── Auth Schemas ─────────────────────────────────────────
+
+class UserRegister(BaseModel):
+    email: EmailStr
+    password: str = Field(..., min_length=8, max_length=128)
+    full_name: str = Field(..., min_length=1, max_length=255)
+    phone: Optional[str] = None
+
+    @field_validator("password")
+    @classmethod
+    def password_strength(cls, v: str) -> str:
+        if not any(c.isdigit() for c in v):
+            raise ValueError("Пароль должен содержать хотя бы одну цифру")
+        if not any(c.isalpha() for c in v):
+            raise ValueError("Пароль должен содержать хотя бы одну букву")
+        return v
+
+
+class UserLogin(BaseModel):
+    email: EmailStr
+    password: str
+
+
+class TokenResponse(BaseModel):
+    access_token: str
+    refresh_token: str
+    token_type: str = "bearer"
+    expires_in: int
+
+
+class UserResponse(BaseModel):
+    id: str
+    email: str
+    full_name: str
+    role: str
+    email_verified: bool
+    phone_verified: bool
+    last_login_at: Optional[datetime]
+    created_at: datetime
+
+
+class UserUpdate(BaseModel):
+    full_name: Optional[str] = Field(None, max_length=255)
+    phone: Optional[str] = Field(None, max_length=30)
+
+
+# ── Expert Card ──────────────────────────────────────────
+
 class ExpertCardBase(BaseModel):
     name: str
     nickname: str = ""
+    age: Optional[int] = None
     profession: str = ""
+    email: Optional[str] = None   # for consent / notifications
+    phone: Optional[str] = None
     city: str = ""
     expertise: list[str] = []
     uvp: str = ""
 
 
 class ExpertCardCreate(ExpertCardBase):
-    pass
+    consent_granted: bool = False  # must be True in production
 
 
 class ExpertCardUpdate(BaseModel):
     name: Optional[str] = None
     nickname: Optional[str] = None
+    age: Optional[int] = None
     profession: Optional[str] = None
     city: Optional[str] = None
     expertise: Optional[list[str]] = None
     uvp: Optional[str] = None
+    # PDn access
+    email: Optional[str] = None
+    phone: Optional[str] = None
 
 
 class ExpertCardResponse(ExpertCardBase):
     id: str
-    stories: list[str] = []
-    achievements: list[str] = []
+    consent_granted: bool
+    consent_granted_at: Optional[datetime]
+    is_anonymized: bool
+    retention_until: Optional[datetime]
     created_at: datetime
     updated_at: datetime
 
     class Config:
         from_attributes = True
 
+
+# ── Consent ──────────────────────────────────────────────
+
+class ConsentRequest(BaseModel):
+    consent_type: str = "processing"   # interview, transcription, processing, marketing
+    consent_version: str = "1.0"
+    is_granted: bool = True
+
+
+class ConsentResponse(BaseModel):
+    id: str
+    consent_type: str
+    consent_version: str
+    is_granted: bool
+    granted_at: datetime
+
+
+# ── Data Subject Rights (152-FZ) ─────────────────────────
+
+class ExportRequest(BaseModel):
+    export_format: str = "json"   # json, pdf
+    include_transcriptions: bool = True
+
+
+class ExportResponse(BaseModel):
+    request_id: str
+    status: str
+    file_url: Optional[str] = None
+    expires_at: Optional[datetime]
+
+
+class DeletionRequest(BaseModel):
+    reason: str = "subject_request"
+    deletion_scope: str = "all"   # all, interview, transcriptions
+
+
+class DeletionResponse(BaseModel):
+    request_id: str
+    status: str
+    expected_completion: datetime
+
+
+class AuditLogResponse(BaseModel):
+    id: int
+    action: str
+    table_name: str
+    record_id: str
+    details: dict
+    ip_address: Optional[str]
+    created_at: datetime
+
+
+# ── Transcription & Content ──────────────────────────────
 
 class TranscriptionResponse(BaseModel):
     id: str
@@ -61,6 +171,8 @@ class ContentItemResponse(BaseModel):
     class Config:
         from_attributes = True
 
+
+# ── Interview ────────────────────────────────────────────
 
 class InterviewStartRequest(BaseModel):
     expert_name: str
