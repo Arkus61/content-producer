@@ -1,2 +1,2 @@
-from .engine import get_async_session, async_engine
-from .models import Base, ExpertCardModel, InterviewSessionModel, TranscriptionModel, ContentItemModel
+"""DB package — Supabase backend (no SQLAlchemy ORM)."""
+from .models import ExpertCard, InterviewSession, Transcription, ContentItem, User

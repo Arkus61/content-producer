@@ -12,19 +12,17 @@ class Settings(BaseSettings):
     # ── LLM ──
     openai_api_key: str = Field(default="", alias="OPENAI_API_KEY")
 
-    # ── Database ──
-    database_url: str = Field(default="sqlite+aiosqlite:///./content_producer.db", alias="DATABASE_URL")
+    # ── Supabase (Auth + DB + Storage) ──
+    supabase_url: str = Field(default="", alias="SUPABASE_URL")
+    supabase_anon_key: str = Field(default="", alias="SUPABASE_ANON_KEY")
+    supabase_service_key: str = Field(default="", alias="SUPABASE_SERVICE_KEY")
+    supabase_jwt_secret: str = Field(default="", alias="SUPABASE_JWT_SECRET")
 
     # ── Server ──
     debug: bool = Field(default=False, alias="DEBUG")
     cors_origins: str = Field(default="*", alias="CORS_ORIGINS")
     host: str = Field(default="127.0.0.1", alias="HOST")
     port: int = Field(default=8000, alias="PORT")
-
-    # ── Supabase Auth ──
-    supabase_url: str = Field(default="", alias="SUPABASE_URL")
-    supabase_service_key: str = Field(default="", alias="SUPABASE_SERVICE_KEY")
-    supabase_jwt_secret: str = Field(default="", alias="SUPABASE_JWT_SECRET")
 
     # ── 152-FZ Operator Info ──
     operator_name: str = Field(default="ООО Content Producer", alias="OPERATOR_NAME")

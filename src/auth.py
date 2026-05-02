@@ -1,47 +1,45 @@
-"""Auth module — Supabase JWT validation only. No passwords."""
+"""Auth module — Supabase JWT validation + lazy user creation in Supabase DB."""
 import jwt
 from jwt import PyJWKClient
 from typing import Optional
-from sqlalchemy import select
-from sqlalchemy.ext.asyncio import AsyncSession
 from fastapi import HTTPException, status
 
 from .config import settings
-from .db.models import User
+from .db_client import db
 
 
 def decode_supabase_token(token: str) -> Optional[dict]:
     """Validate a Supabase JWT (RS256) using Supabase's JWKS endpoint."""
-    try:
-        # Supabase uses RS256 + JWKS
-        jwks_url = f"{settings.supabase_url.rstrip('/')}/auth/v1/jwks"
-        jwks_client = PyJWKClient(jwks_url)
-        signing_key = jwks_client.get_signing_key_from_jwt(token)
-        payload = jwt.decode(
-            token,
-            signing_key.key,
-            algorithms=["RS256"],
-            audience="authenticated",  # Supabase default
-            options={"verify_exp": True},
-        )
-        return payload
-    except Exception:
-        # Fallback: if supabase_url is not set (tests), try HS256 with local secret
+    # Try RS256 via Supabase JWKS first
+    if settings.supabase_url:
         try:
+            jwks_url = f"{settings.supabase_url.rstrip('/')}/auth/v1/jwks"
+            jwks_client = PyJWKClient(jwks_url, cache_jwk_set=True)
+            signing_key = jwks_client.get_signing_key_from_jwt(token)
             payload = jwt.decode(
                 token,
-                settings.supabase_jwt_secret or "test-secret",
-                algorithms=["HS256"],
+                signing_key.key,
+                algorithms=["RS256"],
+                audience="authenticated",
                 options={"verify_exp": True},
             )
             return payload
         except Exception:
-            return None
+            pass
+    # Fallback: HS256 with local secret (for tests / dev)
+    try:
+        payload = jwt.decode(
+            token,
+            settings.supabase_jwt_secret or "test-secret-key-32bytes-long-key!",
+            algorithms=["HS256"],
+            options={"verify_exp": True},
+        )
+        return payload
+    except Exception:
+        return None
 
 
 def get_user_id_from_payload(payload: dict) -> Optional[str]:
-    """Extract Supabase user UUID from JWT payload."""
-    # Supabase JWT 'sub' is the user's UUID in auth.users
     return payload.get("sub")
 
 
@@ -50,46 +48,34 @@ def get_user_email_from_payload(payload: dict) -> Optional[str]:
 
 
 def get_user_role_from_payload(payload: dict) -> str:
-    """Read custom claim 'role' if set, else default to operator."""
     return payload.get("role", "operator")
 
 
-async def get_or_create_user_from_supabase(
-    session: AsyncSession,
-    supabase_uid: str,
-    email: str,
-    full_name: str = "",
-    role: str = "operator",
-) -> User:
-    """Lazy-create a local User record from Supabase auth data."""
-    result = await session.execute(select(User).where(User.supabase_uid == supabase_uid))
-    user = result.scalar_one_or_none()
+async def get_or_create_user(supabase_uid: str, email: str = "", full_name: str = "", role: str = "operator") -> dict:
+    """Lazy-create user in Supabase 'users' table."""
+    user = await db.user_get_by_supabase_uid(supabase_uid)
     if user:
-        # Update email if changed
-        if email and user.email != email:
-            user.email = email
-        if full_name and user.full_name != full_name:
-            user.full_name = full_name
-        await session.commit()
+        # Update stale fields
+        needs_update = False
+        for field, new_val in [("email", email), ("full_name", full_name), ("role", role)]:
+            if new_val and user.get(field) != new_val:
+                needs_update = True
+        if needs_update:
+            updates = {k: v for k, v in [("email", email), ("full_name", full_name), ("role", role)] if v}
+            await db.user_update(user["id"], updates)
         return user
 
-    user = User(
-        supabase_uid=supabase_uid,
-        email=email or f"user-{supabase_uid[:8]}@local",
-        full_name=full_name or "Оператор",
-        role=role,
-    )
-    session.add(user)
-    await session.commit()
-    await session.refresh(user)
-    return user
+    # Create new
+    new_user = await db.user_create({
+        "supabase_uid": supabase_uid,
+        "email": email or f"user-{supabase_uid[:8]}@local",
+        "full_name": full_name or "Оператор",
+        "role": role,
+        "is_active": True,
+    })
+    return new_user
 
 
-async def get_user_by_id(session: AsyncSession, user_id: str) -> Optional[User]:
-    result = await session.execute(select(User).where(User.id == user_id))
-    return result.scalar_one_or_none()
-
-
-def require_admin(user: User) -> None:
-    if user.role != "admin":
+def require_admin(user: dict) -> None:
+    if user.get("role") != "admin":
         raise HTTPException(status_code=403, detail="Требуются права администратора")

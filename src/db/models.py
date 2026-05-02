@@ -1,232 +1,189 @@
-"""SQLAlchemy ORM models — adapted for RF Federal Law 152-FZ compliance."""
-from datetime import datetime, timezone
-from sqlalchemy import String, Text, DateTime, Integer, Boolean, JSON, ForeignKey, func, Index, text
-from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
+"""Pure data models — no ORM. Used with Supabase Client.
+
+Supabase tables:
+  expert_cards, interview_sessions, transcriptions, content_items,
+  consent_logs, data_export_logs, data_deletion_logs, audit_logs
+"""
+from datetime import datetime
+from typing import Optional, List
+from dataclasses import dataclass, field, asdict
 from uuid import uuid4
+import json
 
 
-class Base(DeclarativeBase):
-    pass
+@dataclass
+class ExpertCard:
+    id: str
+    name: str
+    nickname: str = ""
+    age: Optional[int] = None
+    profession: str = ""
+    city: str = ""
+    expertise: str = "[]"
+    uvp: str = ""
+    consent_granted: bool = False
+    consent_version: str = "1.0"
+    consent_granted_at: Optional[str] = None
+    is_anonymized: bool = False
+    retention_until: Optional[str] = None
+    owner_user_id: Optional[str] = None
+    created_at: Optional[str] = None
+    updated_at: Optional[str] = None
+
+    data_subject_email: Optional[str] = None
+    data_subject_phone: Optional[str] = None
+    card_data: Optional[dict] = None
+
+    # Content fields
+    tone_style: str = ""
+    tone_format_pref: str = ""
+    tone_emoji_style: str = ""
+    audience_demographics: str = ""
+    audience_pains: str = "[]"
+    strategy_goals: str = "[]"
+    strategy_platforms: str = "[]"
+    strategy_frequency: str = ""
+    stories: str = "[]"
+    achievements: str = "[]"
+
+    @staticmethod
+    def from_supabase(row: dict):
+        return ExpertCard(**row)
+
+    def to_supabase(self) -> dict:
+        d = asdict(self)
+        # Remove None for clean upsert
+        return {k: v for k, v in d.items() if v is not None}
 
 
-def utcnow() -> datetime:
-    return datetime.now(timezone.utc)
+@dataclass
+class InterviewSession:
+    id: str
+    expert_id: Optional[str] = None
+    expert_name: str = ""
+    responses: str = "{}"
+    is_complete: bool = False
+    creator_user_id: Optional[str] = None
+    created_at: Optional[str] = None
+    retention_until: Optional[str] = None
+
+    @staticmethod
+    def from_supabase(row: dict):
+        return InterviewSession(**row)
 
 
-# ── 1. User (operator staff / admin)
-# ──────────────────────────────────
-# Minimal user table for the operator personnel who manage the system.
-# NOT for end-experts — experts are data subjects under 152-FZ.
+@dataclass
+class Transcription:
+    id: str
+    expert_id: Optional[str] = None
+    source_url: Optional[str] = None
+    text: str = ""
+    language: str = "ru"
+    status: str = "pending"
+    creator_user_id: Optional[str] = None
+    created_at: Optional[str] = None
+    retention_until: Optional[str] = None
 
-class User(Base):
-    __tablename__ = "users"
-
-    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid4()))
-    supabase_uid: Mapped[str | None] = mapped_column(String(36), unique=True, nullable=True, index=True)
-    email: Mapped[str] = mapped_column(String(255), unique=True, nullable=False, index=True)
-    phone: Mapped[str | None] = mapped_column(String(30), unique=True, nullable=True)
-    full_name: Mapped[str] = mapped_column(String(255), nullable=False)
-    role: Mapped[str] = mapped_column(String(20), default="operator")  # operator, admin, viewer
-    is_active: Mapped[bool] = mapped_column(Boolean, default=True)
-    email_verified: Mapped[bool] = mapped_column(Boolean, default=False)
-    phone_verified: Mapped[bool] = mapped_column(Boolean, default=False)
-    last_login_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
-    created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
-    updated_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now(), onupdate=func.now())
+    @staticmethod
+    def from_supabase(row: dict):
+        return Transcription(**row)
 
 
-# ── 2. Expert Card (PDn subject) ─────────────────────────
+@dataclass
+class ContentItem:
+    id: str
+    expert_id: str
+    content_type: str
+    topic: str
+    content: str = ""
+    platform: str = "telegram"
+    status: str = "draft"
+    creator_user_id: Optional[str] = None
+    created_at: Optional[str] = None
+    published_at: Optional[str] = None
 
-class ExpertCardModel(Base):
-    __tablename__ = "expert_cards"
-
-    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid4()))
-    # ── Identity ──
-    name: Mapped[str] = mapped_column(String(255), nullable=False)
-    nickname: Mapped[str] = mapped_column(String(255), server_default="")
-    age: Mapped[int | None] = mapped_column(Integer, nullable=True)
-    city: Mapped[str] = mapped_column(String(255), server_default="")
-    profession: Mapped[str] = mapped_column(String(255), server_default="")
-
-    # ── Content ──
-    expertise: Mapped[list] = mapped_column(JSON, server_default="[]")
-    uvp: Mapped[str] = mapped_column(Text, server_default="")
-    tone_style: Mapped[str] = mapped_column(String(50), server_default="expert")
-    tone_format_pref: Mapped[str] = mapped_column(String(50), server_default="paragraphs")
-    tone_emoji_style: Mapped[str] = mapped_column(String(20), server_default="moderate")
-    audience_demographics: Mapped[str] = mapped_column(Text, server_default="")
-    audience_pains: Mapped[list] = mapped_column(JSON, server_default="[]")
-    strategy_goals: Mapped[list] = mapped_column(JSON, server_default="[]")
-    strategy_platforms: Mapped[list] = mapped_column(JSON, server_default="[]")
-    strategy_frequency: Mapped[str] = mapped_column(String(50), server_default="")
-    stories: Mapped[list] = mapped_column(JSON, server_default="[]")
-    achievements: Mapped[list] = mapped_column(JSON, server_default="[]")
-
-    # ── 152-FZ fields ──
-    # full card dump for export / backup
-    card_data: Mapped[dict | None] = mapped_column(JSON, nullable=True, default=None)
-    data_subject_email: Mapped[str | None] = mapped_column(String(255), nullable=True, index=True)
-    data_subject_phone: Mapped[str | None] = mapped_column(String(30), nullable=True)
-    consent_granted: Mapped[bool] = mapped_column(Boolean, default=False)
-    consent_version: Mapped[str] = mapped_column(String(10), default="1.0")
-    consent_granted_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
-    is_anonymized: Mapped[bool] = mapped_column(Boolean, default=False)
-    retention_until: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
-    # who created / owns the record (operator user linking)
-    owner_user_id: Mapped[str | None] = mapped_column(String(36), ForeignKey("users.id"), nullable=True)
-
-    created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
-    updated_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now(), onupdate=func.now())
-
-    interview_sessions = relationship("InterviewSessionModel", back_populates="expert", cascade="all, delete-orphan")
-    transcriptions = relationship("TranscriptionModel", back_populates="expert", cascade="all, delete-orphan")
-    content_items = relationship("ContentItemModel", back_populates="expert", cascade="all, delete-orphan")
-    consent_log_entries = relationship("ConsentLog", back_populates="expert")
-    export_log_entries = relationship("DataExportLog", back_populates="expert")
-    deletion_log_entries = relationship("DataDeletionLog", back_populates="expert")
-
-    __table_args__ = (
-        Index("idx_expert_email", "data_subject_email"),
-        Index("idx_expert_anon_retention", "is_anonymized", "retention_until"),
-    )
+    @staticmethod
+    def from_supabase(row: dict):
+        return ContentItem(**row)
 
 
-# ── 3. Interview Session ─────────────────────────────────
+@dataclass
+class ConsentLog:
+    id: str
+    expert_id: str
+    consent_type: str
+    is_granted: bool = True
+    consent_version: str = "1.0"
+    ip_address: Optional[str] = None
+    user_agent: Optional[str] = None
+    granted_at: Optional[str] = None
+    withdraw_at: Optional[str] = None
 
-class InterviewSessionModel(Base):
-    __tablename__ = "interview_sessions"
-
-    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid4()))
-    expert_id: Mapped[str | None] = mapped_column(String(36), ForeignKey("expert_cards.id"), nullable=True)
-    expert_name: Mapped[str] = mapped_column(String(255), server_default="")
-    questions_asked: Mapped[int] = mapped_column(Integer, server_default="0")
-    answers_collected: Mapped[int] = mapped_column(Integer, server_default="0")
-    is_complete: Mapped[bool] = mapped_column(Boolean, server_default="false")
-    responses: Mapped[dict] = mapped_column(JSON, server_default="{}")
-    # link to operator user who created the session
-    creator_user_id: Mapped[str | None] = mapped_column(String(36), ForeignKey("users.id"), nullable=True)
-    created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
-    retention_until: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
-
-    expert = relationship("ExpertCardModel", back_populates="interview_sessions")
+    @staticmethod
+    def from_supabase(row: dict):
+        return ConsentLog(**row)
 
 
-# ── 4. Transcription ─────────────────────────────────────
+@dataclass
+class DataExportLog:
+    id: str
+    expert_id: str
+    export_format: str = "json"
+    include_transcriptions: bool = True
+    status: str = "pending"
+    file_path: Optional[str] = None
+    requested_at: Optional[str] = None
+    completed_at: Optional[str] = None
+    expires_at: Optional[str] = None
 
-class TranscriptionModel(Base):
-    __tablename__ = "transcriptions"
-
-    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid4()))
-    expert_id = mapped_column(String(36), ForeignKey("expert_cards.id"), nullable=True)
-    source_url = mapped_column(String(2048), nullable=True)
-    source_type: Mapped[str] = mapped_column(String(20), server_default="file")
-    text: Mapped[str] = mapped_column(Text)
-    language: Mapped[str] = mapped_column(String(10), server_default="ru")
-    status: Mapped[str] = mapped_column(String(20), server_default="pending")
-    creator_user_id: Mapped[str | None] = mapped_column(String(36), ForeignKey("users.id"), nullable=True)
-    created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
-    retention_until: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
-
-    expert = relationship("ExpertCardModel", back_populates="transcriptions")
+    @staticmethod
+    def from_supabase(row: dict):
+        return DataExportLog(**row)
 
 
-# ── 5. Content Item ──────────────────────────────────────
+@dataclass
+class DataDeletionLog:
+    id: str
+    expert_id: str
+    reason: str = "subject_request"
+    deletion_scope: str = "all"
+    status: str = "pending"
+    requested_at: Optional[str] = None
+    completed_at: Optional[str] = None
+    executed_by_user_id: Optional[str] = None
 
-class ContentItemModel(Base):
-    __tablename__ = "content_items"
-
-    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid4()))
-    expert_id: Mapped[str] = mapped_column(String(36), ForeignKey("expert_cards.id"))
-    content_type: Mapped[str] = mapped_column(String(20))
-    platform: Mapped[str] = mapped_column(String(50), server_default="telegram")
-    topic: Mapped[str] = mapped_column(String(255))
-    content: Mapped[str] = mapped_column(Text)
-    status: Mapped[str] = mapped_column(String(20), server_default="draft")
-    creator_user_id: Mapped[str | None] = mapped_column(String(36), ForeignKey("users.id"), nullable=True)
-    created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
-    published_at = mapped_column(DateTime, nullable=True)
-
-    expert = relationship("ExpertCardModel", back_populates="content_items")
+    @staticmethod
+    def from_supabase(row: dict):
+        return DataDeletionLog(**row)
 
 
-# ── 6. Consent Log (152-FZ Art. 9) ───────────────────────
-# Records of data-subject consent for PDn processing.
+@dataclass
+class AuditLog:
+    id: Optional[int] = None
+    table_name: str = ""
+    record_id: str = ""
+    action: str = ""
+    performed_by_user_id: Optional[str] = None
+    ip_address: Optional[str] = None
+    user_agent: Optional[str] = None
+    details: str = "{}"
+    created_at: Optional[str] = None
 
-class ConsentLog(Base):
-    __tablename__ = "consent_logs"
-
-    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid4()))
-    expert_id: Mapped[str] = mapped_column(String(36), ForeignKey("expert_cards.id"), nullable=False)
-    consent_type: Mapped[str] = mapped_column(String(50), nullable=False)  # interview, transcription, processing, marketing
-    consent_version: Mapped[str] = mapped_column(String(10), default="1.0")
-    is_granted: Mapped[bool] = mapped_column(Boolean, default=True)
-    ip_address: Mapped[str | None] = mapped_column(String(45), nullable=True)
-    user_agent: Mapped[str | None] = mapped_column(Text, nullable=True)
-    document_url: Mapped[str | None] = mapped_column(String(512), nullable=True)
-    granted_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
-    withdraw_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
-
-    expert = relationship("ExpertCardModel", back_populates="consent_log_entries")
-
-    __table_args__ = (
-        Index("idx_consent_expert_type", "expert_id", "consent_type"),
-    )
+    @staticmethod
+    def from_supabase(row: dict):
+        return AuditLog(**row)
 
 
-# ── 7. Data Export Log (152-FZ Art. 14.1) ────────────────
-# Log of data-subject requests for copies of their PDn.
+@dataclass
+class User:
+    id: Optional[str] = None
+    supabase_uid: Optional[str] = None
+    email: str = ""
+    full_name: str = ""
+    role: str = "operator"
+    is_active: bool = True
+    created_at: Optional[str] = None
 
-class DataExportLog(Base):
-    __tablename__ = "data_export_logs"
-
-    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid4()))
-    expert_id: Mapped[str] = mapped_column(String(36), ForeignKey("expert_cards.id"), nullable=False)
-    export_format: Mapped[str] = mapped_column(String(20), default="json")  # json, pdf, xlsx
-    file_path: Mapped[str | None] = mapped_column(String(512), nullable=True)
-    include_transcriptions: Mapped[bool] = mapped_column(Boolean, default=True)
-    status: Mapped[str] = mapped_column(String(20), default="pending")  # pending, ready, expired, error
-    requested_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
-    completed_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
-    expires_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
-
-    expert = relationship("ExpertCardModel", back_populates="export_log_entries")
-
-
-# ── 8. Data Deletion Log (152-FZ Art. 14) ────────────────
-# Log of data-subject requests to stop processing / erase PDn.
-
-class DataDeletionLog(Base):
-    __tablename__ = "data_deletion_logs"
-
-    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid4()))
-    expert_id: Mapped[str] = mapped_column(String(36), ForeignKey("expert_cards.id"), nullable=False)
-    reason: Mapped[str] = mapped_column(Text, default="subject_request")
-    status: Mapped[str] = mapped_column(String(20), default="pending")  # pending, processing, completed, failed
-    deletion_scope: Mapped[str] = mapped_column(String(50), default="all")  # all, interview, transcriptions, partial
-    requested_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
-    completed_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
-    executed_by_user_id: Mapped[str | None] = mapped_column(String(36), ForeignKey("users.id"), nullable=True)
-
-    expert = relationship("ExpertCardModel", back_populates="deletion_log_entries")
-
-
-# ── 9. Audit Log (152-FZ Art. 18.1) ──────────────────────
-# Record of all operations with PDn for security monitoring.
-
-class AuditLog(Base):
-    __tablename__ = "audit_logs"
-
-    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
-    table_name: Mapped[str] = mapped_column(String(64), nullable=False, index=True)
-    record_id: Mapped[str] = mapped_column(String(36), nullable=False, index=True)
-    action: Mapped[str] = mapped_column(String(20), nullable=False, index=True)  # create, read, update, delete, export, delete_request
-    performed_by_user_id: Mapped[str | None] = mapped_column(String(36), ForeignKey("users.id"), nullable=True)
-    ip_address: Mapped[str | None] = mapped_column(String(45), nullable=True)
-    user_agent: Mapped[str | None] = mapped_column(Text, nullable=True)
-    details: Mapped[dict] = mapped_column(JSON, server_default="{}")
-    created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
-
-    __table_args__ = (
-        Index("idx_audit_time", "created_at"),
-        Index("idx_audit_user_action", "performed_by_user_id", "action"),
-    )
+    @staticmethod
+    def from_supabase(row: dict):
+        return User(**row)
