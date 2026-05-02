@@ -21,13 +21,10 @@ class Settings(BaseSettings):
     host: str = Field(default="127.0.0.1", alias="HOST")
     port: int = Field(default=8000, alias="PORT")
 
-    # ── Security (152-FZ) ──
-    secret_key: str = Field(default="change-me-please", alias="SECRET_KEY")
-    jwt_algorithm: str = Field(default="HS256", alias="JWT_ALGORITHM")
-    access_token_expire_minutes: int = Field(default=30, alias="ACCESS_TOKEN_EXPIRE_MINUTES")
-    refresh_token_expire_days: int = Field(default=7, alias="REFRESH_TOKEN_EXPIRE_DAYS")
-    max_login_attempts: int = Field(default=5, alias="MAX_LOGIN_ATTEMPTS")
-    lockout_minutes: int = Field(default=30, alias="LOCKOUT_MINUTES")
+    # ── Supabase Auth ──
+    supabase_url: str = Field(default="", alias="SUPABASE_URL")
+    supabase_service_key: str = Field(default="", alias="SUPABASE_SERVICE_KEY")
+    supabase_jwt_secret: str = Field(default="", alias="SUPABASE_JWT_SECRET")
 
     # ── 152-FZ Operator Info ──
     operator_name: str = Field(default="ООО Content Producer", alias="OPERATOR_NAME")

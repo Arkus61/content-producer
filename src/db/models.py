@@ -22,11 +22,11 @@ class User(Base):
     __tablename__ = "users"
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid4()))
+    supabase_uid: Mapped[str | None] = mapped_column(String(36), unique=True, nullable=True, index=True)
     email: Mapped[str] = mapped_column(String(255), unique=True, nullable=False, index=True)
     phone: Mapped[str | None] = mapped_column(String(30), unique=True, nullable=True)
     full_name: Mapped[str] = mapped_column(String(255), nullable=False)
     role: Mapped[str] = mapped_column(String(20), default="operator")  # operator, admin, viewer
-    password_hash: Mapped[str] = mapped_column(String(255), nullable=False)
     is_active: Mapped[bool] = mapped_column(Boolean, default=True)
     email_verified: Mapped[bool] = mapped_column(Boolean, default=False)
     phone_verified: Mapped[bool] = mapped_column(Boolean, default=False)

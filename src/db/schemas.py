@@ -6,30 +6,8 @@ from datetime import datetime
 
 # ── Auth Schemas ─────────────────────────────────────────
 
-class UserRegister(BaseModel):
-    email: EmailStr
-    password: str = Field(..., min_length=8, max_length=128)
-    full_name: str = Field(..., min_length=1, max_length=255)
-    phone: Optional[str] = None
-
-    @field_validator("password")
-    @classmethod
-    def password_strength(cls, v: str) -> str:
-        if not any(c.isdigit() for c in v):
-            raise ValueError("Пароль должен содержать хотя бы одну цифру")
-        if not any(c.isalpha() for c in v):
-            raise ValueError("Пароль должен содержать хотя бы одну букву")
-        return v
-
-
-class UserLogin(BaseModel):
-    email: EmailStr
-    password: str
-
-
 class TokenResponse(BaseModel):
     access_token: str
-    refresh_token: str
     token_type: str = "bearer"
     expires_in: int
 

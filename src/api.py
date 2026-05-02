@@ -20,14 +20,11 @@ from .db.schemas import (
     InterviewStartRequest, InterviewAnswerRequest,
     GenerateContentRequest, TranscriptionResponse, ContentPlanResponse,
     PaginationParams, PaginatedResponse,
-    UserRegister, UserLogin, TokenResponse, UserResponse, UserUpdate,
+    UserResponse, UserUpdate,
     ConsentRequest, ConsentResponse, ExportRequest, ExportResponse,
     DeletionRequest, DeletionResponse, AuditLogResponse,
 )
-from .auth import (
-    authenticate_user, register_user, create_access_token, create_refresh_token,
-    hash_password, decode_token, get_user_by_id,
-)
+from .auth import decode_supabase_token, get_user_by_id
 from .dependencies import get_current_user, require_admin
 from .compliance import (
     consent_service, data_export_service, data_deletion_service,
@@ -147,64 +144,8 @@ def _to_expert_card_response(model: ExpertCardModel) -> dict:
     }
 
 # ═════════════════════════════════════════════════════════
-# AUTH
+# AUTH (Supabase — no passwords, no register/login)
 # ═════════════════════════════════════════════════════════
-
-@app.post("/api/auth/register", response_model=UserResponse, status_code=201)
-async def register(req: UserRegister):
-    rate_limit_check(f"register:{req.email}", max_requests=3, window_seconds=300)
-    async with async_session() as session:
-        try:
-            user = await register_user(
-                session, req.email, req.password, req.full_name, req.phone,
-            )
-            return UserResponse(
-                id=user.id,
-                email=user.email,
-                full_name=user.full_name,
-                role=user.role,
-                email_verified=user.email_verified,
-                phone_verified=user.phone_verified,
-                last_login_at=user.last_login_at,
-                created_at=user.created_at,
-            )
-        except HTTPException:
-            raise
-        except Exception as e:
-            logger.exception("Registration failed")
-            raise HTTPException(status_code=500, detail="Ошибка регистрации")
-
-
-@app.post("/api/auth/login", response_model=TokenResponse)
-async def login(req: UserLogin):
-    rate_limit_check(f"login:{req.email}", max_requests=5, window_seconds=300)
-    async with async_session() as session:
-        user = await authenticate_user(session, req.email, req.password)
-        if not user:
-            raise HTTPException(status_code=401, detail="Неверный email или пароль")
-        user.last_login_at = datetime.now(timezone.utc)
-        await session.commit()
-        at = create_access_token({"sub": user.id})
-        rt = create_refresh_token({"sub": user.id})
-        return TokenResponse(access_token=at, refresh_token=rt, expires_in=settings.access_token_expire_minutes * 60)
-
-
-@app.post("/api/auth/refresh")
-async def refresh(request: Request):
-    body = await request.json()
-    token = body.get("refresh_token")
-    if not token:
-        raise HTTPException(status_code=400, detail="refresh_token required")
-    payload = decode_token(token)
-    if not payload or payload.get("type") != "refresh":
-        raise HTTPException(status_code=401, detail="Неверный refresh token")
-    async with async_session() as session:
-        user = await get_user_by_id(session, payload["sub"])
-        if not user or not user.is_active:
-            raise HTTPException(status_code=401, detail="Пользователь не найден")
-    at = create_access_token({"sub": payload["sub"]})
-    return {"access_token": at, "token_type": "bearer", "expires_in": settings.access_token_expire_minutes * 60}
-
 
 @app.get("/api/auth/me", response_model=UserResponse)
 async def me(user: User = Depends(get_current_user)):

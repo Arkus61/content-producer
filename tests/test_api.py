@@ -1,9 +1,11 @@
 import os
 import pytest
 import asyncio
+import uuid
+from datetime import datetime, timezone, timedelta
 
 os.environ["DATABASE_URL"] = "sqlite+aiosqlite:///./test.db"
-os.environ["SECRET_KEY"] = "test-secret-32bytes-long-key!"
+os.environ["SUPABASE_JWT_SECRET"] = "test-secret-key-32bytes-long-key!"
 
 # clean test DB before run
 import atexit
@@ -21,6 +23,7 @@ try:
 except FileNotFoundError:
     pass
 
+import jwt
 from fastapi.testclient import TestClient
 from src.api import app
 from src.db.engine import async_engine as engine
@@ -40,6 +43,19 @@ def client(setup_test_db):
     return TestClient(app, base_url="http://testserver")
 
 
+def _mock_supabase_token(email="admin@test.ru", role="operator"):
+    """Generate a test JWT signed with HS256 (fallback for local tests)."""
+    uid = str(uuid.uuid4())
+    payload = {
+        "sub": uid,
+        "email": email,
+        "role": role,
+        "exp": datetime.now(timezone.utc) + timedelta(hours=1),
+    }
+    token = jwt.encode(payload, "test-secret-key-32bytes-long-key!", algorithm="HS256")
+    return token
+
+
 def test_health_check(client):
     resp = client.get("/health")
     assert resp.status_code == 200
@@ -55,18 +71,8 @@ def test_operator_info(client):
     assert "privacy_policy_url" in data
 
 
-def _register_and_login(client, email="admin@test.ru", password="TestPass123"):
-    r = client.post("/api/auth/register", json={
-        "email": email, "password": password, "full_name": "Тест"
-    })
-    assert r.status_code in (200, 201), r.text
-    r = client.post("/api/auth/login", json={"email": email, "password": password})
-    assert r.status_code == 200, r.text
-    return r.json()["access_token"]
-
-
-def test_auth_flow(client):
-    token = _register_and_login(client)
+def test_auth_me(client):
+    token = _mock_supabase_token(email="admin@test.ru", role="operator")
     r = client.get("/api/auth/me", headers={"Authorization": f"Bearer {token}"})
     assert r.status_code == 200, r.text
     data = r.json()
@@ -75,7 +81,7 @@ def test_auth_flow(client):
 
 
 def test_create_expert_requires_consent(client):
-    token = _register_and_login(client, email="user1@test.ru")
+    token = _mock_supabase_token(email="user1@test.ru", role="operator")
     headers = {"Authorization": f"Bearer {token}"}
     # Without consent — must fail
     r = client.post("/api/experts", headers=headers, json={
@@ -97,7 +103,7 @@ def test_create_expert_requires_consent(client):
 
 
 def test_expert_full_crud(client):
-    token = _register_and_login(client, email="user2@test.ru")
+    token = _mock_supabase_token(email="user2@test.ru", role="operator")
     headers = {"Authorization": f"Bearer {token}"}
 
     # Create

@@ -1,10 +1,10 @@
-"""Auth dependencies: extract user from JWT in request headers."""
+"""Auth dependencies — extract Supabase user from JWT, lazy-create in DB."""
 from fastapi import Request, HTTPException, Depends, status
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
 
-from .auth import decode_token
+from .auth import decode_supabase_token, get_user_id_from_payload, get_or_create_user_from_supabase
 from .db.engine import async_session_factory
 from .db.models import User
 
@@ -13,9 +13,9 @@ security = HTTPBearer()
 
 
 async def get_current_user(credentials: HTTPAuthorizationCredentials = Depends(security)) -> User:
-    """Dependency: extract and validate JWT, return User object."""
+    """Dependency: validate Supabase JWT, lazy-create User, return User object."""
     token = credentials.credentials
-    payload = decode_token(token)
+    payload = decode_supabase_token(token)
     if not payload:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
@@ -23,22 +23,26 @@ async def get_current_user(credentials: HTTPAuthorizationCredentials = Depends(s
             headers={"WWW-Authenticate": "Bearer"},
         )
 
-    user_id = payload.get("sub")
-    token_type = payload.get("type", "access")
-    if not user_id or token_type != "access":
+    supabase_uid = get_user_id_from_payload(payload)
+    if not supabase_uid:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Некорректный токен",
             headers={"WWW-Authenticate": "Bearer"},
         )
 
+    email = payload.get("email", "")
+    full_name = payload.get("user_metadata", {}).get("full_name", "")
+    role = payload.get("role", "operator")
+
     async with async_session_factory() as session:
-        result = await session.execute(select(User).where(User.id == user_id))
-        user = result.scalar_one_or_none()
-        if not user or not user.is_active:
+        user = await get_or_create_user_from_supabase(
+            session, supabase_uid, email, full_name, role
+        )
+        if not user.is_active:
             raise HTTPException(
                 status_code=status.HTTP_401_UNAUTHORIZED,
-                detail="Пользователь не найден или деактивирован",
+                detail="Пользователь деактивирован",
                 headers={"WWW-Authenticate": "Bearer"},
             )
         return user
