@@ -1,82 +1,66 @@
-from pydantic_settings import BaseSettings
+from pydantic_settings import BaseSettings, SettingsConfigDict
 from pydantic import Field
-from dataclasses import dataclass, field
-import os
-from dotenv import load_dotenv
 
-load_dotenv()
+class Settings(BaseSettings):
+    model_config = SettingsConfigDict(
+        env_file=".env",
+        env_file_encoding="utf-8",
+        extra="ignore",
+        populate_by_name=True,
+    )
 
-
-@dataclass
-class Settings:
     # ── LLM ──
-    openai_api_key: str = ""
+    openai_api_key: str = Field(default="", alias="OPENAI_API_KEY")
 
     # ── Database ──
-    database_url: str = "sqlite+aiosqlite:///./content_producer.db"
+    database_url: str = Field(default="sqlite+aiosqlite:///./content_producer.db", alias="DATABASE_URL")
 
     # ── Server ──
-    debug: bool = False
-    cors_origins: str = "*"
-    host: str = "127.0.0.1"
-    port: int = 8000
+    debug: bool = Field(default=False, alias="DEBUG")
+    cors_origins: str = Field(default="*", alias="CORS_ORIGINS")
+    host: str = Field(default="127.0.0.1", alias="HOST")
+    port: int = Field(default=8000, alias="PORT")
 
     # ── Security (152-FZ) ──
-    secret_key: str = Field(default="change-me-please", description="JWT secret — 32+ bytes")
-    jwt_algorithm: str = "HS256"
-    access_token_expire_minutes: int = 30
-    refresh_token_expire_days: int = 7
-    max_login_attempts: int = 5
-    lockout_minutes: int = 30
+    secret_key: str = Field(default="change-me-please", alias="SECRET_KEY")
+    jwt_algorithm: str = Field(default="HS256", alias="JWT_ALGORITHM")
+    access_token_expire_minutes: int = Field(default=30, alias="ACCESS_TOKEN_EXPIRE_MINUTES")
+    refresh_token_expire_days: int = Field(default=7, alias="REFRESH_TOKEN_EXPIRE_DAYS")
+    max_login_attempts: int = Field(default=5, alias="MAX_LOGIN_ATTEMPTS")
+    lockout_minutes: int = Field(default=30, alias="LOCKOUT_MINUTES")
 
     # ── 152-FZ Operator Info ──
-    operator_name: str = "ООО Content Producer"          # наименование оператора
-    operator_address: str = "г. Москва, ..."               # адрес
-    operator_inn: str = ""                                   # ИНН
-    operator_email: str = "privacy@content-producer.ru"     # контакт privacy
-    operator_phone: str = "+7 (999) 000-00-00"
-    operator_dpo_email: str = "dpo@content-producer.ru"    # контакт ДПО
-    operator_dpo_phone: str = "+7 (999) 000-00-01"
+    operator_name: str = Field(default="ООО Content Producer", alias="OPERATOR_NAME")
+    operator_address: str = Field(default="г. Москва, ...", alias="OPERATOR_ADDRESS")
+    operator_inn: str = Field(default="", alias="OPERATOR_INN")
+    operator_email: str = Field(default="privacy@content-producer.ru", alias="OPERATOR_EMAIL")
+    operator_phone: str = Field(default="+7 (999) 000-00-00", alias="OPERATOR_PHONE")
+    operator_dpo_email: str = Field(default="dpo@content-producer.ru", alias="DPO_EMAIL")
+    operator_dpo_phone: str = Field(default="+7 (999) 000-00-01", alias="DPO_PHONE")
 
     # ── 152-FZ Retention & Processing ──
-    default_retention_days: int = 365 * 5   # 5 лет по умолчанию (ст. 14)
-    interview_retention_days: int = 365 * 2 # 2 года для интервью
-    transcription_retention_days: int = 365 * 1
-    audit_retention_days: int = 365 * 3
-    consent_retention_days: int = 365 * 10  # согласия хранить дольше
+    default_retention_days: int = Field(default=365 * 5, alias="DEFAULT_RETENTION_DAYS")
+    interview_retention_days: int = Field(default=365 * 2, alias="INTERVIEW_RETENTION_DAYS")
+    transcription_retention_days: int = Field(default=365 * 1, alias="TRANSCRIPTION_RETENTION_DAYS")
+    audit_retention_days: int = Field(default=365 * 3, alias="AUDIT_RETENTION_DAYS")
+    consent_retention_days: int = Field(default=365 * 10, alias="CONSENT_RETENTION_DAYS")
 
     # ── 152-FZ Encryption ──
-    enable_field_encryption: bool = True
-    # Fernet key for field-level encryption of sensitive PDn
-    # Generate with cryptography.fernet.Fernet.generate_key()
-    encryption_key: str = os.getenv("ENCRYPTION_KEY", "")
+    enable_field_encryption: bool = Field(default=True, alias="ENABLE_FIELD_ENCRYPTION")
+    encryption_key: str = Field(default="", alias="ENCRYPTION_KEY")
 
     # ── 152-FZ Logging ──
-    enable_audit_logging: bool = True
-    anonymize_audit_ips: bool = True   # маскировать IP в логах
+    enable_audit_logging: bool = Field(default=True, alias="ENABLE_AUDIT_LOGGING")
+    anonymize_audit_ips: bool = Field(default=True, alias="ANONYMIZE_AUDIT_IPS")
 
     # ── Consent ──
-    consent_document_url: str = "/docs/consent.pdf"
-    privacy_policy_url: str = "/docs/privacy-policy.pdf"
-    minimum_consent_version: str = "1.0"
+    consent_document_url: str = Field(default="/docs/consent.pdf", alias="CONSENT_DOCUMENT_URL")
+    privacy_policy_url: str = Field(default="/docs/privacy-policy.pdf", alias="PRIVACY_POLICY_URL")
+    minimum_consent_version: str = Field(default="1.0", alias="MINIMUM_CONSENT_VERSION")
 
     # ── Export & Deletion ──
-    export_ttl_hours: int = 72         # сколько часов доступна ссылка на экспорт
-    deletion_grace_hours: int = 72     # отсрочка перед физическим удалением
-
-    def __post_init__(self):
-        if not self.secret_key or self.secret_key == "change-me-please":
-            # try env fallback
-            self.secret_key = os.getenv("SECRET_KEY", self.secret_key)
-        if not self.openai_api_key:
-            self.openai_api_key = os.getenv("OPENAI_API_KEY", "")
-        if not self.database_url:
-            self.database_url = os.getenv("DATABASE_URL", self.database_url)
-        self.cors_origins = os.getenv("CORS_ORIGINS", self.cors_origins)
-        self.debug = os.getenv("DEBUG", str(self.debug)).lower() == "true"
-        if not self.encryption_key:
-            self.encryption_key = os.getenv("ENCRYPTION_KEY", "")
-        self.enable_field_encryption = os.getenv("ENABLE_ENCRYPTION", str(self.enable_field_encryption)).lower() == "true"
+    export_ttl_hours: int = Field(default=72, alias="EXPORT_TTL_HOURS")
+    deletion_grace_hours: int = Field(default=72, alias="DELETION_GRACE_HOURS")
 
 
 settings = Settings()

@@ -121,7 +121,7 @@ class ExportResponse(BaseModel):
     request_id: str
     status: str
     file_url: Optional[str] = None
-    expires_at: Optional[datetime]
+    expires_at: Optional[datetime] = None
 
 
 class DeletionRequest(BaseModel):
