@@ -29,7 +29,7 @@ async def get_current_user(credentials: HTTPAuthorizationCredentials = Depends(s
 
     email = payload.get("email", "")
     full_name = payload.get("user_metadata", {}).get("full_name", "")
-    role = payload.get("role", "operator")
+    role = payload.get("app_metadata", {}).get("role") or payload.get("role", "operator")
 
     user = await get_or_create_user(supabase_uid, email, full_name, role)
     if not user.get("is_active", True):
@@ -42,6 +42,16 @@ async def get_current_user(credentials: HTTPAuthorizationCredentials = Depends(s
 
 
 async def require_admin(user: dict = Depends(get_current_user)) -> dict:
-    if user.get("role") not in ("admin", "operator"):
+    if user.get("role") != "admin":
         raise HTTPException(status_code=403, detail="Требуются права администратора")
     return user
+
+
+async def require_expert_owner(expert_id: str, user: dict) -> None:
+    """Verify user owns the expert record (or is admin)."""
+    from .db_client import db
+    e = await db.expert_get(expert_id)
+    if not e:
+        raise HTTPException(status_code=404, detail="Expert not found")
+    if user.get("role") != "admin" and e.get("owner_user_id") != user.get("id"):
+        raise HTTPException(status_code=403, detail="Нет доступа к записи эксперта")

@@ -26,11 +26,18 @@ def decode_supabase_token(token: str) -> Optional[dict]:
             return payload
         except Exception:
             pass
-    # Fallback: HS256 with local secret (for tests / dev)
+    # Fallback: HS256 with local secret (for tests / dev ONLY)
     try:
+        secret = settings.supabase_jwt_secret
+        if not secret:
+            raise ValueError("SUPABASE_JWT_SECRET not set")
+        # Security: reject fallback in production unless explicitly allowed
+        # Fallback is auto-allowed when Supabase URL is not configured (test/dev)
+        if not settings.debug and settings.supabase_url and not getattr(settings, "allow_jwt_fallback", False):
+            raise ValueError("JWT fallback (HS256) denied in production. Configure RS256 via Supabase JWKS.")
         payload = jwt.decode(
             token,
-            settings.supabase_jwt_secret or "test-secret-key-32bytes-long-key!",
+            secret,
             algorithms=["HS256"],
             options={"verify_exp": True},
         )

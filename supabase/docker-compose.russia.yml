@@ -1,0 +1,104 @@
+"""Deploy self-hosted Supabase to a server in Russia.
+
+Usage:
+    1. Copy supabase/docker-compose.russia.yml & .env.russia to server
+    2. Edit .env.russia with host & secrets
+    3. docker compose -f docker-compose.russia.yml up -d
+"""
+
+name: "content-producer-supabase-russia"
+services:
+  db:
+    image: supabase/postgres:15.1.1.78
+    container_name: cp_russia_db
+    hostname: db
+    ports:
+      - "5432:5432"
+    environment:
+      POSTGRES_DB: "postgres"
+      POSTGRES_USER: "postgres"
+      POSTGRES_PASSWORD: "${POSTGRES_PASSWORD}"
+      PGDATA: "/var/lib/postgresql/data/pgdata"
+    volumes:
+      - db-data:/var/lib/postgresql/data
+      - ${PWD}/migrations:/docker-entrypoint-initdb.d
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+    networks:
+      - cp_russia
+
+  postgrest:
+    image: postgrest/postgrest:v12.2.0
+    container_name: cp_russia_api
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      PGRST_DB_URI: "postgres://postgres:${POSTGRES_PASSWORD}@db:5432/postgres"
+      PGRST_DB_SCHEMAS: "public,storage,auth"
+      PGRST_DB_ANON_ROLE: "anon"
+      PGRST_DB_MAX_ROWS: "1000"
+      PGRST_JWT_SECRET: "${JWT_SECRET}"
+      PGRST_OPENAPI_SERVER_PROXY_URI: "${API_EXTERNAL_URL}"
+    ports:
+      - "3000:3000"
+    networks:
+      - cp_russia
+
+  auth:
+    image: supabase/gotrue:v2.158.1
+    container_name: cp_russia_auth
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      GOTRUE_DB_DRIVER: "postgres"
+      GOTRUE_DB_DATABASE_URL: "postgres://postgres:${POSTGRES_PASSWORD}@db:5432/postgres?search_path=auth"
+      GOTRUE_SITE_URL: "${SITE_URL}"
+      GOTRUE_JWT_SECRET: "${JWT_SECRET}"
+      GOTRUE_JWT_EXP: "3600"
+      GOTRUE_EXTERNAL_EMAIL_ENABLED: "true"
+      GOTRUE_EXTERNAL_PHONE_ENABLED: "true"
+      GOTRUE_SMTP_HOST: "${SMTP_HOST:-}"
+      GOTRUE_SMTP_PORT: "${SMTP_PORT:-587}"
+      GOTRUE_SMTP_USER: "${SMTP_USER:-}"
+      GOTRUE_SMTP_PASS: "${SMTP_PASS:-}"
+      GOTRUE_SMTP_SENDER_NAME: "${SMTP_SENDER:-}"
+      GOTRUE_MAILER_AUTOCONFIRM: "${MAILER_AUTOCONFIRM:-false}"
+      GOTRUE_DISABLE_SIGNUP: "${DISABLE_SIGNUP:-false}"
+      GOTRUE_API_EXTERNAL_URL: "${API_EXTERNAL_URL}"
+      GOTRUE_URI_ALLOW_LIST: "${REDIRECT_URI_ALLOW_LIST}"
+    ports:
+      - "9999:9999"
+    networks:
+      - cp_russia
+
+  kong:
+    image: kong:3.7
+    container_name: cp_russia_kong
+    depends_on:
+      - postgrest
+      - auth
+    environment:
+      KONG_DATABASE: "off"
+      KONG_DECLARATIVE_CONFIG: "/kong.yml"
+      KONG_PLUGINS: "request-transformer,cors"
+      KONG_NGINX_PROXY_PROXY_BUFFERS: "4 256k"
+      KONG_NGINX_PROXY_PROXY_BUFFER_SIZE: "128k"
+    volumes:
+      - ./kong.yml:/kong.yml:ro
+    ports:
+      - "8000:8000"
+    networks:
+      - cp_russia
+
+volumes:
+  db-data:
+    driver: local
+
+networks:
+  cp_russia:
+    driver: bridge

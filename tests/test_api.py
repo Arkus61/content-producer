@@ -5,6 +5,7 @@ import uuid
 from datetime import datetime, timezone, timedelta
 
 os.environ["SUPABASE_JWT_SECRET"] = "test-secret-key-32bytes-long-key-superlong!!!!"
+os.environ["DEBUG"] = "true"
 
 from fastapi.testclient import TestClient
 from src.api import app
@@ -68,7 +69,7 @@ def test_create_expert_requires_consent(client):
 
 
 def test_expert_full_crud(client):
-    token = _mock_supabase_token()
+    token = _mock_supabase_token(role="admin")
     headers = {"Authorization": f"Bearer {token}"}
 
     # Create

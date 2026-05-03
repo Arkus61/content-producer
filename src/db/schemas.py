@@ -1,5 +1,5 @@
 """Pydantic schemas for API request/response validation."""
-from pydantic import BaseModel, Field, EmailStr, field_validator
+from pydantic import BaseModel, Field, EmailStr, field_validator, ConfigDict
 from typing import Optional
 from datetime import datetime
 
@@ -44,6 +44,7 @@ class ExpertCardBase(BaseModel):
 
 class ExpertCardCreate(ExpertCardBase):
     consent_granted: bool = False  # must be True in production
+    consent_version: str = "1.0"
 
 
 class ExpertCardUpdate(BaseModel):
@@ -68,8 +69,7 @@ class ExpertCardResponse(ExpertCardBase):
     created_at: datetime
     updated_at: datetime
 
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True)
 
 
 # ── Consent ──────────────────────────────────────────────
@@ -133,8 +133,7 @@ class TranscriptionResponse(BaseModel):
     preview: str = ""
     created_at: datetime
 
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True)
 
 
 class ContentItemResponse(BaseModel):
@@ -146,8 +145,7 @@ class ContentItemResponse(BaseModel):
     status: str
     created_at: datetime
 
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True)
 
 
 # ── Interview ────────────────────────────────────────────

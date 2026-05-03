@@ -13,7 +13,6 @@ from interviewer.analyzer import analyze_interview
 from producer_agent.planner import generate_content_plan
 from expert_card.parser import save_card
 from transcriber.pipeline import transcribe
-from transcriber.youtube import is_youtube_url
 
 
 SESSION_LABELS = {

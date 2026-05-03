@@ -76,19 +76,24 @@ class SupabaseDB:
             return result.data
         return await _mem._select_one("expert_cards", expert_id)
 
-    async def expert_insert(self, data: dict) -> dict:
-        for field in ["expertise", "stories", "achievements", "audience_pains", "strategy_goals", "strategy_platforms"]:
+    @staticmethod
+    def _serialize_lists(data: dict) -> None:
+        for field in [
+            "expertise", "stories", "achievements", "audience_pains",
+            "strategy_goals", "strategy_platforms", "style_vocabulary",
+        ]:
             if field in data and isinstance(data[field], list):
                 data[field] = json.dumps(data[field])
+
+    async def expert_insert(self, data: dict) -> dict:
+        self._serialize_lists(data)
         if settings.supabase_url:
             result = await supabase_client.table("expert_cards").insert(data).execute()
             return result.data[0] if result.data else data
         return await _mem._insert("expert_cards", data)
 
     async def expert_update(self, expert_id: str, data: dict) -> dict:
-        for field in ["expertise", "stories", "achievements", "audience_pains", "strategy_goals", "strategy_platforms"]:
-            if field in data and isinstance(data[field], list):
-                data[field] = json.dumps(data[field])
+        self._serialize_lists(data)
         data.setdefault("updated_at", datetime.now(timezone.utc).isoformat())
         if settings.supabase_url:
             result = await supabase_client.table("expert_cards").update(data).eq("id", expert_id).execute()
@@ -236,6 +241,26 @@ class SupabaseDB:
             return result.data
         return await _mem._select_one("interview_sessions", session_id)
 
+    async def interview_update(self, session_id: str, data: dict) -> dict:
+        if settings.supabase_url:
+            result = await supabase_client.table("interview_sessions").update(data).eq("id", session_id).execute()
+            return result.data[0] if result.data else data
+        return await _mem._update("interview_sessions", session_id, data)
+
+    async def interview_list(self, expert_id: str) -> List[dict]:
+        if settings.supabase_url:
+            result = await supabase_client.table("interview_sessions").select("*").eq("expert_id", expert_id).execute()
+            return result.data or []
+        rows = await _mem._select_all("interview_sessions", expert_id=expert_id)
+        return rows
+
+    async def interview_delete(self, session_id: str) -> bool:
+        if settings.supabase_url:
+            await supabase_client.table("interview_sessions").delete().eq("id", session_id).execute()
+            return True
+        await _mem._delete("interview_sessions", session_id)
+        return True
+
     # ── Transcriptions ─────────────────────────────────────
     async def transcription_insert(self, data: dict) -> dict:
         if settings.supabase_url:
@@ -243,12 +268,36 @@ class SupabaseDB:
             return result.data[0] if result.data else data
         return await _mem._insert("transcriptions", data)
 
-    async def transcription_list(self, expert_id: str) -> List[dict]:
+    async def transcription_list(self, expert_id: str | None = None, creator_user_id: str | None = None) -> List[dict]:
         if settings.supabase_url:
-            result = await supabase_client.table("transcriptions").select("*").eq("expert_id", expert_id).execute()
+            query = supabase_client.table("transcriptions").select("*")
+            if expert_id is not None:
+                query = query.eq("expert_id", expert_id)
+            if creator_user_id is not None:
+                query = query.eq("creator_user_id", creator_user_id)
+            if expert_id is None and creator_user_id is None:
+                pass
+            result = await query.execute()
             return result.data or []
-        rows = await _mem._select_all("transcriptions", expert_id=expert_id)
+        rows = await _mem._select_all("transcriptions")
+        if expert_id is not None:
+            rows = [r for r in rows if r.get("expert_id") == expert_id]
+        if creator_user_id is not None:
+            rows = [r for r in rows if r.get("creator_user_id") == creator_user_id]
         return rows
+
+    async def transcription_get(self, transcription_id: str) -> Optional[dict]:
+        if settings.supabase_url:
+            result = await supabase_client.table("transcriptions").select("*").eq("id", transcription_id).single().execute()
+            return result.data
+        return await _mem._select_one("transcriptions", transcription_id)
+
+    async def transcription_delete(self, transcription_id: str) -> bool:
+        if settings.supabase_url:
+            await supabase_client.table("transcriptions").delete().eq("id", transcription_id).execute()
+            return True
+        await _mem._delete("transcriptions", transcription_id)
+        return True
 
     # ── Content Items ──────────────────────────────────────
     async def content_insert(self, data: dict) -> dict:
@@ -264,6 +313,13 @@ class SupabaseDB:
             return result.data or []
         rows = await _mem._select_all("content_items", expert_id=expert_id)
         return rows[skip: skip + limit]
+
+    async def content_delete(self, content_id: str) -> bool:
+        if settings.supabase_url:
+            await supabase_client.table("content_items").delete().eq("id", content_id).execute()
+            return True
+        await _mem._delete("content_items", content_id)
+        return True
 
     # ── Storage (Supabase Storage) ──────────────────────────
     async def storage_upload(self, bucket: str, path: str, file_bytes: bytes, content_type: str = "application/octet-stream") -> str:

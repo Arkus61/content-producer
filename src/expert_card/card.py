@@ -54,6 +54,19 @@ class PersonalityProfile(BaseModel):
     communication_style: str = Field(default="", description="Предпочтительный стиль общения")
 
 
+# ── Style Profile (learned from pipeline reflection) ─────
+
+class StyleProfile(BaseModel):
+    """Style markers extracted from generated content and critic feedback."""
+    vocabulary: list[str] = Field(default_factory=list, description="Words/phrases the expert uses frequently")
+    sentence_length: str = Field(default="mixed", description="short, medium, long, mixed")
+    humor_level: int = Field(default=5, ge=0, le=10, description="0-10 scale")
+    emoji_usage: str = Field(default="moderate", description="none, minimal, moderate, heavy")
+    story_structure: str = Field(default="hook-story-lesson", description="hook-story-lesson, question-answer, problem-solution")
+    call_to_action_style: str = Field(default="soft", description="soft, direct, implied")
+    update_count: int = Field(default=0, ge=0, description="How many times style was refined")
+
+
 # ── Expertise Profile (from Block 2) ───────────────────
 
 class ExpertiseProfile(BaseModel):
@@ -127,6 +140,9 @@ class ExpertCard(BaseModel):
     strategy: ContentStrategy = Field(default_factory=ContentStrategy)
     stories: list[str] = Field(default_factory=list)
     achievements: list[str] = Field(default_factory=list)
+
+    # Style profile (learned from pipeline reflection)
+    style: StyleProfile = Field(default_factory=StyleProfile)
 
     # Мета
     created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))

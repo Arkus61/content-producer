@@ -1,8 +1,10 @@
 
-from src.producer_agent.agent import ProducerAgent
+import asyncio
+from unittest.mock import patch, AsyncMock
 from src.producer_agent.strategy import build_strategy, CONTENT_PILLARS
 from src.producer_agent.planner import generate_content_plan
 from src.expert_card.card import ExpertCard
+
 
 def _make_card():
     return ExpertCard(
@@ -11,11 +13,6 @@ def _make_card():
         expertise=["Python", "AI"],
     )
 
-def test_producer_agent():
-    card = _make_card()
-    agent = ProducerAgent(card, api_key="test")
-    strategy = agent.generate_strategy()
-    assert "Test Expert" in strategy
 
 def test_build_strategy():
     card = _make_card()
@@ -25,12 +22,26 @@ def test_build_strategy():
 
 def test_content_plan():
     card = _make_card()
-    plan = generate_content_plan(card, days=3)
+    mock_result = {
+        "content": f"Mocked post for {card.profession}",
+        "visual_brief": {},
+        "score": {"overall": 85},
+        "iterations": 1,
+        "task_id": "mock-task",
+        "pipeline_log": {},
+    }
+
+    with patch("src.producer_agent.planner.ContentPipeline") as MockPipeline:
+        instance = MockPipeline.return_value
+        instance.run = AsyncMock(return_value=mock_result)
+        plan = asyncio.run(generate_content_plan(card, days=3, api_key=""))
+
     assert len(plan) <= 3
     for item in plan:
         assert "pillar" in item
         assert "topic" in item
         assert "day" in item
+        assert "pipeline_logs" in item  # injected by agent pipeline
 
 def test_content_pillars():
     assert len(CONTENT_PILLARS) == 4

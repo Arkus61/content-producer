@@ -7,7 +7,6 @@ from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, HTTPException, UploadFile, File, Form, Depends, Request, status
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.middleware.trustedhost import TrustedHostMiddleware
 from fastapi.responses import JSONResponse
 
 from .config import settings
@@ -22,7 +21,7 @@ from .db.schemas import (
 )
 from .auth import decode_supabase_token
 from .interviewer.analyzer import analyze_interview
-from .dependencies import get_current_user, require_admin
+from .dependencies import get_current_user, require_admin, require_expert_owner
 from .compliance import (
     log_consent, withdraw_consent, request_export, request_deletion,
     audit_log, list_audit_logs, build_export_response, build_deletion_response,
@@ -35,6 +34,16 @@ from .content_generator.social_post import generate_social_post
 from .content_generator.video_script import generate_video_script
 from .transcriber.pipeline import transcribe
 from .transcriber.youtube import is_youtube_url
+from .content_pipeline.pipeline import ContentPipeline
+from .social_integrations import (
+    PublishRequest, PublishResponse, SocialPublisher,
+    TelegramPoster, InstagramPoster,
+    PreviewRequest, PreviewResponse,
+)
+from .payment import (
+    SubscriptionService, CreateSubscriptionRequest, SubscriptionResponse,
+    ProdamusWebhookHandler, ProdamusClient,
+)
 
 # ── Logging ──
 logging.basicConfig(level=logging.INFO)
@@ -47,6 +56,7 @@ active_interviews: dict[str, dict] = {}
 _rate_limit_store: dict[str, tuple[int, datetime]] = {}
 
 def rate_limit_check(key: str, max_requests: int = 5, window_seconds: int = 60):
+    """Naive per-process in-memory rate limiter. Not shared across workers/processes."""
     now = datetime.now(timezone.utc)
     count, first = _rate_limit_store.get(key, (0, now))
     if (now - first).total_seconds() > window_seconds:
@@ -79,7 +89,6 @@ app.add_middleware(
     allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS", "PATCH"],
     allow_headers=["*"],
 )
-app.add_middleware(TrustedHostMiddleware, allowed_hosts=["*"])
 
 # Audit log middleware
 @app.middleware("http")
@@ -102,7 +111,7 @@ async def audit_middleware(request: Request, call_next):
                                performed_by_user_id=user_id, ip_address=ip, user_agent=ua,
                                details={"path": path})
             except Exception:
-                pass
+                logger.warning("Audit logging failed for %s %s", method, path, exc_info=True)
     return response
 
 # ── Helper ──
@@ -129,9 +138,15 @@ def _to_expert_card_response(row: dict) -> dict:
     }
 
 
-# ═════════════════════════════════════════════════════════
-# AUTH (Supabase — no passwords, no register/login)
-# ═════════════════════════════════════════════════════════
+def _filter_fields_for_user(row: dict, user: dict) -> dict:
+    """Strip sensitive PDn fields from expert row unless user is owner or admin."""
+    resp = dict(row)
+    is_owner = (resp.get("owner_user_id") == user.get("id"))
+    is_admin = (user.get("role") == "admin")
+    if not (is_owner or is_admin):
+        resp.pop("data_subject_email", None)
+        resp.pop("data_subject_phone", None)
+    return resp
 
 @app.get("/api/auth/me", response_model=UserResponse)
 async def me(user: dict = Depends(get_current_user)):
@@ -163,8 +178,11 @@ async def list_experts(
     skip: int = 0, limit: int = 50,
     user: dict = Depends(get_current_user),
 ):
-    experts = await db.expert_list(skip, limit, owner_user_id=user.get("id"))
-    return {"experts": [_to_expert_card_response(e) for e in experts]}
+    if user.get("role") == "admin":
+        experts = await db.expert_list(skip, limit)
+    else:
+        experts = await db.expert_list(skip, limit, owner_user_id=user.get("id"))
+    return {"experts": [_to_expert_card_response(_filter_fields_for_user(e, user)) for e in experts]}
 
 
 @app.get("/api/experts/{expert_id}")
@@ -172,7 +190,8 @@ async def get_expert(expert_id: str, user: dict = Depends(get_current_user)):
     e = await db.expert_get(expert_id)
     if not e:
         raise HTTPException(404, "Expert not found")
-    return _to_expert_card_response(e)
+    await require_expert_owner(expert_id, user)
+    return _to_expert_card_response(_filter_fields_for_user(e, user))
 
 
 @app.post("/api/experts")
@@ -183,6 +202,9 @@ async def create_expert(
 ):
     if not req.consent_granted:
         raise HTTPException(status_code=400, detail="Согласие на обработку ПДн обязательно")
+
+    if getattr(req, "consent_version", "") and req.consent_version < settings.minimum_consent_version:
+        raise HTTPException(status_code=400, detail=f"Consent version must be >= {settings.minimum_consent_version}")
 
     expert_id = str(uuid.uuid4())
     now = datetime.now(timezone.utc).isoformat()
@@ -200,7 +222,7 @@ async def create_expert(
         "expertise": req.expertise,
         "uvp": req.uvp,
         "consent_granted": True,
-        "consent_version": settings.minimum_consent_version,
+        "consent_version": req.consent_version if req.consent_version else settings.minimum_consent_version,
         "consent_granted_at": now,
         "owner_user_id": user.get("id"),
         "retention_until": retention,
@@ -212,7 +234,7 @@ async def create_expert(
         expert_id=expert_id,
         consent_type="processing",
         is_granted=True,
-        consent_version=settings.minimum_consent_version,
+        consent_version=req.consent_version if req.consent_version else settings.minimum_consent_version,
         ip_address=request.client.host if request.client else None,
         user_agent=request.headers.get("user-agent", ""),
     )
@@ -226,6 +248,10 @@ async def update_expert(
     req: ExpertCardUpdate,
     user: dict = Depends(get_current_user),
 ):
+    e = await db.expert_get(expert_id)
+    if not e:
+        raise HTTPException(404, "Expert not found")
+    await require_expert_owner(expert_id, user)
     updates = {}
     for field, value in [("name", req.name), ("nickname", req.nickname), ("age", req.age),
                          ("profession", req.profession), ("city", req.city), ("expertise", req.expertise),
@@ -287,7 +313,10 @@ async def start_interview(req: InterviewStartRequest, user: dict = Depends(get_c
 
 
 @app.post("/api/interview/{session_id}/answer")
-async def submit_answer(session_id: str, req: InterviewAnswerRequest):
+async def submit_answer(session_id: str, req: InterviewAnswerRequest, user: dict = Depends(get_current_user)):
+    sess = await db.interview_get(session_id)
+    if not sess or sess.get("creator_user_id") != user.get("id"):
+        raise HTTPException(403, "Нет доступа к сессии интервью")
     if session_id not in active_interviews:
         raise HTTPException(404, "Interview session not found")
 
@@ -439,9 +468,11 @@ async def transcribe_upload(
 
 @app.get("/api/transcribe/{transcription_id}")
 async def get_transcription(transcription_id: str, user: dict = Depends(get_current_user)):
-    # In-memory fallback: just search all transcriptions
-    trans = await db.transcription_list(None)  # None returns all
-    t = next((x for x in trans if x.get("id") == transcription_id), None)
+    if user.get("role") == "admin":
+        t = await db.transcription_get(transcription_id)
+    else:
+        trans = await db.transcription_list(expert_id=None, creator_user_id=user.get("id"))
+        t = next((x for x in trans if x.get("id") == transcription_id), None)
     if not t:
         raise HTTPException(404, "Transcription not found")
     return {"id": t.get("id"), "expert_id": t.get("expert_id"), "source_url": t.get("source_url"), "text": t.get("text"), "language": t.get("language"), "created_at": t.get("created_at")}
@@ -456,6 +487,7 @@ async def generate_content(expert_id: str, req: GenerateContentRequest, user: di
     e = await db.expert_get(expert_id)
     if not e:
         raise HTTPException(404, "Expert not found")
+    await require_expert_owner(expert_id, user)
     card = ExpertCard(
         name=e.get("name"), profession=e.get("profession"),
         expertise=json.loads(e.get("expertise", "[]") or "[]"),
@@ -473,12 +505,101 @@ async def generate_content(expert_id: str, req: GenerateContentRequest, user: di
         "id": content_id, "expert_id": expert_id, "content_type": req.content_type,
         "topic": req.topic, "platform": req.platform, "content": body_text,
         "creator_user_id": user.get("id"),
+        "retention_until": (datetime.now(timezone.utc) + timedelta(days=settings.default_retention_days)).isoformat(),
     })
     return {"content_id": content_id, "content": content}
 
 
+@app.post("/api/experts/{expert_id}/content/v2")
+async def generate_content_v2(expert_id: str, req: GenerateContentRequest, user: dict = Depends(get_current_user)):
+    e = await db.expert_get(expert_id)
+    if not e:
+        raise HTTPException(404, "Expert not found")
+    await require_expert_owner(expert_id, user)
+    # Build card with expert_id embedded
+    card = ExpertCard(
+        name=e.get("name"), profession=e.get("profession"),
+        expertise=json.loads(e.get("expertise", "[]") or "[]"),
+    )
+    # Inject expert_id as extra attribute for style adapter
+    card.id = expert_id  # type: ignore[attr-defined]
+
+    # Load existing style profile from DB if present
+    style_data = {
+        "vocabulary": json.loads(e.get("style_vocabulary", "[]") or "[]"),
+        "sentence_length": e.get("style_sentence_length", "mixed"),
+        "humor_level": e.get("style_humor_level", 5),
+        "emoji_usage": e.get("style_emoji_usage", "moderate"),
+        "story_structure": e.get("style_story_structure", "hook-story-lesson"),
+        "call_to_action_style": e.get("style_call_to_action_style", "soft"),
+        "update_count": e.get("style_update_count", 0),
+    }
+    for key, val in style_data.items():
+        setattr(card.style, key, val)
+
+    pipeline = ContentPipeline(api_key=settings.openai_api_key)
+    result = await pipeline.run(card, req.topic, req.platform)
+
+    # Persist updated style profile to DB
+    adapter = StyleAdapter()
+    await adapter.write_to_db(card, db)
+
+    content_id = str(uuid.uuid4())
+    await db.content_insert({
+        "id": content_id, "expert_id": expert_id, "content_type": req.content_type,
+        "topic": req.topic, "platform": req.platform,
+        "content": json.dumps({
+            "content": result.get("content"),
+            "visual_brief": result.get("visual_brief"),
+            "score": result.get("score"),
+            "iterations": result.get("iterations"),
+            "task_id": result.get("task_id"),
+            "logs": result.get("logs"),
+        }, ensure_ascii=False),
+        "creator_user_id": user.get("id"),
+        "retention_until": (datetime.now(timezone.utc) + timedelta(days=settings.default_retention_days)).isoformat(),
+    })
+
+    return {
+        "content_id": content_id,
+        "content": result.get("content"),
+        "visual_brief": result.get("visual_brief"),
+        "score": result.get("score"),
+        "iterations": result.get("iterations"),
+        "task_id": result.get("task_id"),
+        "pipeline_log": result.get("pipeline_log"),
+    }
+
+
+@app.get("/api/experts/{expert_id}/reflections")
+async def list_reflections(expert_id: str, user: dict = Depends(get_current_user)):
+    e = await db.expert_get(expert_id)
+    if not e:
+        raise HTTPException(404, "Expert not found")
+    await require_expert_owner(expert_id, user)
+    reflections_dir = Path("data/reflections")
+    file_path = reflections_dir / f"{e.get('name', expert_id).lower().replace(' ', '_')}.jsonl"
+    if not file_path.exists():
+        return {"expert_id": expert_id, "reflections": []}
+    reflections = []
+    with open(file_path, "r", encoding="utf-8") as f:
+        for line in f:
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                reflections.append(json.loads(line))
+            except json.JSONDecodeError:
+                continue
+    return {"expert_id": expert_id, "reflections": reflections}
+
+
 @app.get("/api/experts/{expert_id}/content")
 async def get_expert_content(expert_id: str, skip: int = 0, limit: int = 20, user: dict = Depends(get_current_user)):
+    e = await db.expert_get(expert_id)
+    if not e:
+        raise HTTPException(404, "Expert not found")
+    await require_expert_owner(expert_id, user)
     items = await db.content_list(expert_id, skip, limit)
     return {"items": [
         {"id": i.get("id"), "type": i.get("content_type"), "topic": i.get("topic"),
@@ -492,9 +613,10 @@ async def get_content_plan(expert_id: str, days: int = 7, user: dict = Depends(g
     e = await db.expert_get(expert_id)
     if not e:
         raise HTTPException(404, "Expert not found")
+    await require_expert_owner(expert_id, user)
     card = ExpertCard(name=e.get("name"), profession=e.get("profession"),
                       expertise=json.loads(e.get("expertise", "[]") or "[]"))
-    plan = generate_content_plan(card, days)
+    plan = await generate_content_plan(card, days, api_key=settings.openai_api_key)
     return {"plan": plan}
 
 
@@ -512,6 +634,7 @@ async def grant_consent(
     e = await db.expert_get(expert_id)
     if not e:
         raise HTTPException(404, "Expert not found")
+    await require_expert_owner(expert_id, user)
 
     log = await log_consent(
         expert_id=expert_id,
@@ -540,6 +663,7 @@ async def delete_consent(
     e = await db.expert_get(expert_id)
     if not e:
         raise HTTPException(404, "Expert not found")
+    await require_expert_owner(expert_id, user)
     await withdraw_consent(expert_id, consent_type)
     return {"status": "consent_withdrawn", "expert_id": expert_id}
 
@@ -553,6 +677,7 @@ async def request_data_export(
     e = await db.expert_get(expert_id)
     if not e:
         raise HTTPException(404, "Expert not found")
+    await require_expert_owner(expert_id, user)
     if not e.get("consent_granted"):
         raise HTTPException(403, "Согласие на обработку не предоставлено")
 
@@ -568,6 +693,12 @@ async def get_export_status(request_id: str, user: dict = Depends(get_current_us
     row = await db.export_get(request_id)
     if not row:
         raise HTTPException(404, "Export request not found")
+    # Ownership check: only admin or the expert's owner can view
+    expert = await db.expert_get(row.get("expert_id"))
+    if not expert:
+        raise HTTPException(404, "Export request not found")
+    if user.get("role") != "admin" and expert.get("owner_user_id") != user.get("id"):
+        raise HTTPException(403, "Нет доступа")
     return build_export_response(row)
 
 
@@ -580,6 +711,7 @@ async def request_data_deletion(
     e = await db.expert_get(expert_id)
     if not e:
         raise HTTPException(404, "Expert not found")
+    await require_expert_owner(expert_id, user)
 
     request_id = await request_deletion(expert_id, req.reason, req.deletion_scope)
     expected = datetime.now(timezone.utc) + timedelta(hours=settings.deletion_grace_hours)
@@ -594,6 +726,12 @@ async def get_deletion_status(request_id: str, user: dict = Depends(get_current_
     row = await db.deletion_get(request_id)
     if not row:
         raise HTTPException(404, "Deletion request not found")
+    # Ownership check: only admin or the expert's owner can view
+    expert = await db.expert_get(row.get("expert_id"))
+    if not expert:
+        raise HTTPException(404, "Deletion request not found")
+    if user.get("role") != "admin" and expert.get("owner_user_id") != user.get("id"):
+        raise HTTPException(403, "Нет доступа")
     return build_deletion_response(row)
 
 
@@ -636,14 +774,201 @@ async def operator_info():
 
 
 # ═════════════════════════════════════════════════════════
+# SOCIAL INTEGRATIONS
+# ═════════════════════════════════════════════════════════
+
+# ── Initialize social publishers ──
+_social_publisher: SocialPublisher | None = None
+
+def _get_social_publisher() -> SocialPublisher:
+    global _social_publisher
+    if _social_publisher is None:
+        telegram = None
+        if settings.telegram_bot_token:
+            telegram = TelegramPoster(settings.telegram_bot_token)
+        instagram = None
+        if settings.instagram_access_token and settings.instagram_account_id:
+            instagram = InstagramPoster(
+                settings.instagram_access_token,
+                settings.instagram_account_id,
+            )
+        _social_publisher = SocialPublisher(
+            telegram_poster=telegram,
+            instagram_poster=instagram,
+            db_client=db if settings.supabase_url else None,
+        )
+    return _social_publisher
+
+
+@app.post("/api/content/preview", response_model=PreviewResponse)
+async def preview_post(
+    req: PreviewRequest,
+    user: dict = Depends(get_current_user),
+):
+    """Preview how the post will look on the target platform."""
+    publisher = _get_social_publisher()
+    return await publisher.preview(PublishRequest(
+        expert_id=user.get("id", ""),
+        content=req.content,
+        platform=req.platform,
+        image_url=req.image_url,
+        dry_run=True,
+    ))
+
+
+@app.post("/api/content/publish", response_model=PublishResponse)
+async def publish_post(
+    req: PublishRequest,
+    user: dict = Depends(get_current_user),
+):
+    """Publish generated content to Telegram or Instagram.
+
+    - Pass `dry_run=True` to preview without publishing
+    - Provide `channel_id` for Telegram (channel username or ID)
+    - Provide `image_url` for Instagram (required)
+    - Pass `hashtags` to append at the end
+    """
+    # Use default channel if none provided
+    if req.platform.value == "telegram" and not req.channel_id and settings.default_telegram_channel:
+        req.channel_id = settings.default_telegram_channel
+
+    publisher = _get_social_publisher()
+    return await publisher.publish(req)
+
+
+@app.get("/api/content/published")
+async def list_published_posts(
+    expert_id: str | None = None,
+    platform: str | None = None,
+    skip: int = 0,
+    limit: int = 20,
+    user: dict = Depends(get_current_user),
+):
+    """List published posts from history."""
+    query = db.table("published_posts").select("*")
+    if expert_id:
+        query = query.eq("expert_id", expert_id)
+    if platform:
+        query = query.eq("platform", platform)
+    result = await query.order("created_at", desc=True).range(skip, skip + limit - 1).execute()
+    posts = result.data if hasattr(result, "data") else []
+    return {
+        "items": [{**p, "created_at": p.get("created_at")} for p in posts],
+        "total": len(posts),
+        "skip": skip,
+        "limit": limit,
+    }
+
+
+# ═════════════════════════════════════════════════════════
+# PAYMENT & SUBSCRIPTIONS
+# ═════════════════════════════════════════════════════════
+
+# ── Initialize subscription service ──
+_subscription_service: SubscriptionService | None = None
+
+def _get_subscription_service() -> SubscriptionService:
+    global _subscription_service
+    if _subscription_service is None:
+        prodamus = None
+        if settings.prodamus_api_key:
+            prodamus = ProdamusClient()
+        _subscription_service = SubscriptionService(
+            db_client=db if settings.supabase_url else None,
+            prodamus=prodamus,
+        )
+    return _subscription_service
+
+
+@app.post("/api/subscriptions", response_model=SubscriptionResponse)
+async def create_subscription(
+    req: CreateSubscriptionRequest,
+    user: dict = Depends(get_current_user),
+):
+    """Create a new subscription. Free activates immediately, paid returns payment_url."""
+    req.user_id = user.get("id", req.user_id)
+    svc = _get_subscription_service()
+    return await svc.create_subscription(req)
+
+
+@app.get("/api/subscriptions/current")
+async def get_current_subscription(
+    user: dict = Depends(get_current_user),
+):
+    """Get the current active subscription for the authenticated user."""
+    svc = _get_subscription_service()
+    sub = await svc.get_subscription(user.get("id", ""))
+    if not sub:
+        return {"status": "none", "tier": "free", "message": "No subscription found — using free tier"}
+    return {
+        "id": sub.id,
+        "tier": sub.tier,
+        "status": sub.status,
+        "started_at": sub.started_at,
+        "expires_at": sub.expires_at,
+        "auto_renew": sub.auto_renew,
+    }
+
+
+@app.post("/api/payment/webhook/prodamus")
+async def prodamus_webhook(
+    request: Request,
+):
+    """Receive Prodamus payment webhook."""
+    from .payment import ProdamusWebhookPayload
+
+    raw_body = await request.body()
+    signature = request.headers.get("X-Signature")
+
+    handler = ProdamusWebhookHandler(settings.prodamus_secret_key)
+
+    # Verify signature if secret is configured
+    if settings.prodamus_secret_key:
+        if not handler.verify(raw_body, signature):
+            logger.warning("Prodamus webhook signature verification failed")
+            raise HTTPException(status_code=400, detail="Invalid signature")
+
+    try:
+        form = await request.form()
+        payload = handler.parse(dict(form))
+    except Exception as exc:
+        logger.error("Prodamus webhook parse error: %s", exc)
+        raise HTTPException(status_code=422, detail="Invalid payload")
+
+    svc = _get_subscription_service()
+    success = await svc.handle_webhook(payload)
+    if not success:
+        raise HTTPException(status_code=400, detail="Webhook processing failed")
+
+    return {"status": "ok"}
+
+
+@app.get("/api/payment/transactions")
+async def list_transactions(
+    limit: int = 20,
+    skip: int = 0,
+    user: dict = Depends(get_current_user),
+):
+    """List payment transactions for the authenticated user."""
+    result = await db.table("payment_transactions")\
+        .select("*")\
+        .eq("user_id", user.get("id", ""))\
+        .order("created_at", desc=True)\
+        .range(skip, skip + limit - 1)\
+        .execute()
+    rows = result.data if hasattr(result, "data") else []
+    return {"items": rows, "total": len(rows), "skip": skip, "limit": limit}
+
+
+# ═════════════════════════════════════════════════════════
 # HEALTH
 # ═════════════════════════════════════════════════════════
 
 @app.get("/health")
 async def health():
-    return {"status": "ok", "version": "0.4.0-supabase", "compliance": "152-FZ"}
+    return {"status": "ok", "version": "0.6.0-payment", "compliance": "152-FZ"}
 
 
 @app.get("/")
 async def root():
-    return {"name": "Content Producer API", "version": "0.4.0", "docs": "/docs", "compliance": "152-FZ"}
+    return {"name": "Content Producer API", "version": "0.6.0", "docs": "/docs", "compliance": "152-FZ"}

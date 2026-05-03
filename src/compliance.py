@@ -1,12 +1,15 @@
 """152-FZ compliance — simple async functions using db_client."""
 import json
 import asyncio
+import logging
 from datetime import datetime, timezone, timedelta
 from typing import Optional
 from uuid import uuid4
 
 from .config import settings
 from .db_client import db
+
+logger = logging.getLogger(__name__)
 
 
 # ── Consent ─────────────────────────────────────────────
@@ -102,12 +105,16 @@ async def _prepare_export(request_id: str, expert_id: str, export_format: str, i
 
         await db.storage_upload("exports", path, file_bytes, "application/json")
 
+        signed_url = await db.storage_get_url("exports", path)
+
         await db.export_update(request_id, {
             "status": "ready",
             "file_path": path,
+            "signed_url": signed_url,
             "completed_at": datetime.now(timezone.utc).isoformat(),
         })
     except Exception:
+        logger.warning("Export preparation failed for request %s", request_id, exc_info=True)
         await db.export_update(request_id, {"status": "error"})
 
 
@@ -133,10 +140,24 @@ async def request_deletion(
 
 async def _execute_deletion(request_id: str, expert_id: str, scope: str):
     """Background: anonymize after grace period."""
-    await asyncio.sleep(60)  # Reduced for tests; production: hours * 3600
+    if settings.debug:
+        await asyncio.sleep(10)
+    else:
+        await asyncio.sleep(settings.deletion_grace_hours * 3600)
 
     try:
         if scope == "all":
+            # Cascade delete related records
+            interviews = await db.interview_list(expert_id)
+            for iv in interviews:
+                await db.interview_delete(iv.get("id"))
+            transcriptions = await db.transcription_list(expert_id)
+            for tr in transcriptions:
+                await db.transcription_delete(tr.get("id"))
+            contents = await db.content_list(expert_id)
+            for ci in contents:
+                await db.content_delete(ci.get("id"))
+            # Anonymize expert card
             await db.expert_update(expert_id, {
                 "name": "[Удалён]", "nickname": "", "age": None, "city": "", "profession": "",
                 "data_subject_email": None, "data_subject_phone": None,
@@ -162,15 +183,19 @@ async def audit_log(
     user_agent: Optional[str] = None,
     details: Optional[dict] = None,
 ) -> dict:
-    return await db.audit_insert({
-        "table_name": table_name,
-        "record_id": record_id,
-        "action": action,
-        "performed_by_user_id": performed_by_user_id,
-        "ip_address": ip_address,
-        "user_agent": user_agent,
-        "details": json.dumps(details or {}),
-    })
+    try:
+        return await db.audit_insert({
+            "table_name": table_name,
+            "record_id": record_id,
+            "action": action,
+            "performed_by_user_id": performed_by_user_id,
+            "ip_address": ip_address,
+            "user_agent": user_agent,
+            "details": json.dumps(details or {}),
+        })
+    except Exception:
+        logger.warning("Audit log failed for %s/%s/%s", table_name, record_id, action, exc_info=True)
+        return {}
 
 
 async def list_audit_logs(limit: int = 100, skip: int = 0, **filters) -> tuple[int, list]:
@@ -183,7 +208,7 @@ def build_export_response(row: dict) -> dict:
     return {
         "request_id": row.get("id"),
         "status": row.get("status"),
-        "file_url": row.get("file_path"),
+        "file_url": row.get("signed_url") or row.get("file_path"),
         "expires_at": row.get("expires_at"),
     }
 
