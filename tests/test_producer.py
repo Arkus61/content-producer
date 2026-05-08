@@ -29,9 +29,10 @@ def test_content_plan():
         "iterations": 1,
         "task_id": "mock-task",
         "pipeline_log": {},
+        "trace": {"spans": []},
     }
 
-    with patch("src.producer_agent.planner.ContentPipeline") as MockPipeline:
+    with patch("src.producer_agent.planner.PipelineDispatcher") as MockPipeline:
         instance = MockPipeline.return_value
         instance.run = AsyncMock(return_value=mock_result)
         plan = asyncio.run(generate_content_plan(card, days=3, api_key=""))

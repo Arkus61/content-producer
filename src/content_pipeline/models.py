@@ -79,6 +79,9 @@ class PipelineContext(BaseModel):
     logs: list[str] = Field(default_factory=list)
     iterations: int = 0
 
+    # Runtime-only — not serialized or validated strictly
+    _card: Any = None
+
     def log(self, message: str) -> None:
         self.logs.append(message)
 

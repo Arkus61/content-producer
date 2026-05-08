@@ -4,7 +4,7 @@ import json
 import re
 
 from ..expert_card.card import ExpertCard
-from ..content_pipeline import ContentPipeline
+from ..content_pipeline import PipelineDispatcher
 
 
 def _sanitize_topic(topic: str) -> str:
@@ -21,7 +21,7 @@ async def generate_video_script(
     api_key: str = "",
 ) -> dict:
     """Generate a video script via the full agent chain."""
-    pipeline = ContentPipeline(api_key=api_key)
+    pipeline = PipelineDispatcher(api_key=api_key)
     result = await pipeline.run(
         card=card,
         topic=topic,

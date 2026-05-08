@@ -1,6 +1,7 @@
 import json
 import openai
 from .session import InterviewSession
+from .questions import QUESTION_BANK
 from ..expert_card.card import (
     ExpertCard, ToneOfVoice, Audience, ContentStrategy,
     PersonalityProfile, ExpertiseProfile, ProductProfile,
@@ -20,9 +21,7 @@ async def analyze_interview(session: InterviewSession, api_key: str) -> ExpertCa
     for block in ["personality", "expertise", "product"]:
         block_responses = session.get_block_responses(block)
         if block_responses:
-            block_q = {q.id: q.text for q in __import__(
-                'interviewer.questions', fromlist=['QUESTION_BANK']
-            ).QUESTION_BANK if q.block == block}
+            block_q = {q.id: q.text for q in QUESTION_BANK if q.block == block}
             section = []
             for q_id, answer in block_responses.items():
                 q_text = block_q.get(q_id, q_id)

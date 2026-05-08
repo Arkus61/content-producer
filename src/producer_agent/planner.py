@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from datetime import datetime, timedelta
 from ..expert_card.card import ExpertCard
-from ..content_pipeline import ContentPipeline
+from ..content_pipeline import PipelineDispatcher
 
 
 async def generate_content_plan(
@@ -11,7 +11,7 @@ async def generate_content_plan(
     api_key: str = "",
 ) -> list[dict]:
     """Generate a content plan using pipeline enrichment per item."""
-    pipeline = ContentPipeline(api_key=api_key)
+    pipeline = PipelineDispatcher(api_key=api_key)
 
     topics = [
         ("educational", f"Как начать в {card.profession}"),

@@ -18,11 +18,12 @@ class ProdamusWebhookHandler:
         self.secret_key = secret_key
 
     def verify(self, raw_body: bytes, signature_header: str | None) -> bool:
-        """Verify Prodamus HMAC-SHA256 signature."""
+        """Verify Prodamus HMAC-SHA256 signature. Refuses all webhooks if secret_key is not set."""
         if not self.secret_key:
-            logger.warning("Prodamus secret_key not set; accepting webhook without verification")
-            return True
+            logger.critical("Prodamus secret_key not set — REFUSING webhook (signature verification impossible)")
+            return False
         if not signature_header:
+            logger.warning("Prodamus webhook received without X-Signature header")
             return False
         expected = hmac.new(
             self.secret_key.encode("utf-8"),

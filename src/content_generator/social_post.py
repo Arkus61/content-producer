@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from ..expert_card.card import ExpertCard
-from ..content_pipeline import ContentPipeline
+from ..content_pipeline import PipelineDispatcher
 
 
 async def generate_social_post(
@@ -11,7 +11,7 @@ async def generate_social_post(
     api_key: str = "",
 ) -> dict:
     """Generate a social post via the full agent chain."""
-    pipeline = ContentPipeline(api_key=api_key)
+    pipeline = PipelineDispatcher(api_key=api_key)
     result = await pipeline.run(
         card=card,
         topic=topic,
@@ -28,7 +28,7 @@ async def generate_post_series(
     api_key: str = "",
 ) -> list[dict]:
     """Generate a series of posts via the pipeline."""
-    pipeline = ContentPipeline(api_key=api_key)
+    pipeline = PipelineDispatcher(api_key=api_key)
     results: list[dict] = []
     memory_notes: list[str] = []
     for topic in topics:

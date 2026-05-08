@@ -107,7 +107,7 @@ class PipelineDispatcher:
             content_type=content_type,
             memory_notes=memory_notes or [],
         )
-        ctx._card = card  # type: ignore[attr-defined]
+        ctx._card = card
 
         start = time.monotonic()
 
