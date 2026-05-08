@@ -554,8 +554,19 @@ class MemoryAgent:
             "weight": update.get("weight", "0%"),
         }
 
-        # Merge learned patterns
+        # Merge learned patterns — deduplicate by pattern name
         patterns = list(current.learned_patterns or [])
+        existing_patterns = {p.get("pattern", "") for p in patterns}
+        if new_pattern.get("pattern") in existing_patterns:
+            return {
+                "status": "applied",
+                "skill": skill_name,
+                "version": current.version,
+                "pattern_added": new_pattern.get("pattern", ""),
+                "patterns_total": len(patterns),
+                "evolution_entries": len(current.evolution_log or []),
+                "note": "pattern already exists, skipped duplicate",
+            }
         patterns.append(new_pattern)
 
         # Evolution log entry
