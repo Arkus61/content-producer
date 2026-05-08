@@ -75,7 +75,7 @@ class ContentPipeline:
         ).hexdigest()[:16]
 
         ctx = PipelineContext(
-            expert_id=getattr(card, "id", card.name),
+            expert_id=(getattr(card, "id", None) or card.name),
             topic=topic,
             platform=platform,
             content_type=content_type,

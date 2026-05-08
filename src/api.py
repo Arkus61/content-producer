@@ -34,7 +34,10 @@ from .content_generator.social_post import generate_social_post
 from .content_generator.video_script import generate_video_script
 from .transcriber.pipeline import transcribe
 from .transcriber.youtube import is_youtube_url
-from .content_pipeline.pipeline import ContentPipeline
+from .content_pipeline.dispatcher import PipelineDispatcher
+from .content_pipeline.style_adapter import StyleAdapter
+from .content_pipeline.skill_loader import SkillRegistry
+from .content_pipeline.memory_agent import MemoryAgent
 from .social_integrations import (
     PublishRequest, PublishResponse, SocialPublisher,
     TelegramPoster, InstagramPoster,
@@ -522,7 +525,7 @@ async def generate_content_v2(expert_id: str, req: GenerateContentRequest, user:
         expertise=json.loads(e.get("expertise", "[]") or "[]"),
     )
     # Inject expert_id as extra attribute for style adapter
-    card.id = expert_id  # type: ignore[attr-defined]
+    card.id = expert_id
 
     # Load existing style profile from DB if present
     style_data = {
@@ -537,7 +540,7 @@ async def generate_content_v2(expert_id: str, req: GenerateContentRequest, user:
     for key, val in style_data.items():
         setattr(card.style, key, val)
 
-    pipeline = ContentPipeline(api_key=settings.openai_api_key)
+    pipeline = PipelineDispatcher(api_key=settings.openai_api_key)
     result = await pipeline.run(card, req.topic, req.platform)
 
     # Persist updated style profile to DB
@@ -568,6 +571,7 @@ async def generate_content_v2(expert_id: str, req: GenerateContentRequest, user:
         "iterations": result.get("iterations"),
         "task_id": result.get("task_id"),
         "pipeline_log": result.get("pipeline_log"),
+        "trace": result.get("trace", {}),
     }
 
 
@@ -618,6 +622,94 @@ async def get_content_plan(expert_id: str, days: int = 7, user: dict = Depends(g
                       expertise=json.loads(e.get("expertise", "[]") or "[]"))
     plan = await generate_content_plan(card, days, api_key=settings.openai_api_key)
     return {"plan": plan}
+
+
+# ═════════════════════════════════════════════════════════
+# SKILLS
+# ═════════════════════════════════════════════════════════
+
+_skill_registry: SkillRegistry | None = None
+
+def _get_skill_registry() -> SkillRegistry:
+    global _skill_registry
+    if _skill_registry is None:
+        _skill_registry = SkillRegistry(Path(__file__).parent / "content_pipeline" / "agents")
+    return _skill_registry
+
+
+@app.get("/api/skills")
+async def list_skills():
+    """Returns all available skills grouped by agent."""
+    registry = _get_skill_registry()
+    return {"skills": registry.list_all()}
+
+
+@app.get("/api/skills/{agent}/{skill}/evolution")
+async def skill_evolution(agent: str, skill: str):
+    """Returns evolution log for a specific skill."""
+    registry = _get_skill_registry()
+    try:
+        s = registry.get(agent, skill)
+        return {
+            "skill": s.name,
+            "agent": s.agent,
+            "version": s.version,
+            "evolution_log": s.evolution_log,
+        }
+    except KeyError:
+        raise HTTPException(404, "Skill not found")
+
+
+# ═════════════════════════════════════════════════════════
+# MEMORY
+# ═════════════════════════════════════════════════════════
+
+@app.get("/api/experts/{expert_id}/memory/insights")
+async def memory_insights(expert_id: str, user: dict = Depends(get_current_user)):
+    """Returns memory insights for an expert."""
+    e = await db.expert_get(expert_id)
+    if not e:
+        raise HTTPException(404, "Expert not found")
+    await require_expert_owner(expert_id, user)
+
+    agent = MemoryAgent(data_dir="data/memory")
+    reflection = await agent.self_reflection(expert_id)
+    return {
+        "expert_id": expert_id,
+        "reflection": reflection,
+    }
+
+
+@app.get("/api/experts/{expert_id}/memory/gaps")
+async def memory_gaps(expert_id: str, user: dict = Depends(get_current_user)):
+    """Returns knowledge gaps for an expert."""
+    e = await db.expert_get(expert_id)
+    if not e:
+        raise HTTPException(404, "Expert not found")
+    await require_expert_owner(expert_id, user)
+
+    agent = MemoryAgent(data_dir="data/memory")
+    gaps = await agent.gap_hunt(expert_id)
+    return {
+        "expert_id": expert_id,
+        "gaps": gaps,
+    }
+
+
+@app.post("/api/experts/{expert_id}/memory/reflect")
+async def memory_reflect(expert_id: str, user: dict = Depends(get_current_user)):
+    """Triggers self-reflection for an expert's memory."""
+    e = await db.expert_get(expert_id)
+    if not e:
+        raise HTTPException(404, "Expert not found")
+    await require_expert_owner(expert_id, user)
+
+    agent = MemoryAgent(data_dir="data/memory")
+    reflection = await agent.self_reflection(expert_id)
+    return {
+        "expert_id": expert_id,
+        "reflection": reflection,
+    }
 
 
 # ═════════════════════════════════════════════════════════

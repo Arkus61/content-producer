@@ -144,6 +144,9 @@ class ExpertCard(BaseModel):
     # Style profile (learned from pipeline reflection)
     style: StyleProfile = Field(default_factory=StyleProfile)
 
+    # Runtime id for DB operations (not persisted in the card itself)
+    id: Optional[str] = None
+
     # Мета
     created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
     updated_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
