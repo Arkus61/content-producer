@@ -1,27 +1,60 @@
 version: "3.8"
 
+# Production docker-compose for content-producer
+# Usage: docker compose up -d (add --build on first deploy or after code changes)
+#
+# Prerequisites:
+#   1. Copy .env.production to .env and fill in secrets
+#   2. Run migrations: docker compose run --rm app alembic upgrade head
+#   3. docker compose up -d
+
 services:
   app:
     build: .
+    container_name: content-producer-app
+    restart: unless-stopped
     ports:
       - "8000:8000"
+    env_file:
+      - .env
     environment:
+      - DATABASE_URL=postgresql+asyncpg://postgres:${POSTGRES_PASSWORD}@db:5432/content_producer
       - OPENAI_API_KEY=${OPENAI_API_KEY}
-      - DATABASE_URL=postgresql+asyncpg://postgres:postgres@db:5432/content_producer
-      - CORS_ORIGINS=*
+      - SUPABASE_JWT_SECRET=${SUPABASE_JWT_SECRET}
+      - CORS_ORIGINS=${CORS_ORIGINS:-*}
+      - DEBUG=${DEBUG:-false}
     depends_on:
-      - db
+      db:
+        condition: service_healthy
+    volumes:
+      - ./data:/app/data          # memory, reflections
+      - ./experts:/app/experts    # expert card .md files
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 15s
 
   db:
-    image: postgres:16-alpine
+    image: pgvector/pgvector:pg16
+    container_name: content-producer-db
+    restart: unless-stopped
+    ports:
+      - "5433:5432"
     environment:
       - POSTGRES_USER=postgres
-      - POSTGRES_PASSWORD=postgres
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD}
       - POSTGRES_DB=content_producer
     volumes:
       - pgdata:/var/lib/postgresql/data
-    ports:
-      - "5433:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d content_producer"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
 
 volumes:
   pgdata:
+    driver: local
