@@ -1,0 +1,31 @@
+[Unit]
+Description=Content Producer API — AI SaaS for expert content creation
+After=network.target postgresql.service
+
+[Service]
+Type=simple
+User=content-producer
+Group=content-producer
+WorkingDirectory=/opt/content-producer
+EnvironmentFile=/opt/content-producer/.env
+ExecStart=/opt/content-producer/venv/bin/uvicorn src.main:app --host 0.0.0.0 --port 8000
+Restart=on-failure
+RestartSec=5
+TimeoutStopSec=30
+KillMode=mixed
+
+# Security hardening
+NoNewPrivileges=yes
+PrivateTmp=yes
+ProtectSystem=strict
+ProtectHome=yes
+ReadWritePaths=/opt/content-producer/data /opt/content-producer/experts
+ReadOnlyPaths=/opt/content-producer/src /opt/content-producer/venv
+
+# Logging
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=content-producer
+
+[Install]
+WantedBy=multi-user.target
